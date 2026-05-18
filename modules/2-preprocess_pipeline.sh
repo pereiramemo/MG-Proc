@@ -21,22 +21,28 @@ cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
 Required:
-  --reads FILE          R1 file
-  --reads2 FILE         R2 file
+  --reads FILE          R1 file (or single-end file when --single_end=t)
   --output_dir DIR      Output directory
 
-Optional:
-  --clean t|f           Remove intermediates (default f)
-  --compress t|f        Compress outputs with pigz (default f)
+Paired-end only (ignored when --single_end=t):
+  --reads2 FILE         R2 file
   --merger STR          pear|bbmerge (default pear)
-  --min_length NUM      Minimum read length after trimming (default 75)
   --min_overlap NUM     Minimum PE overlap for PEAR (default 10)
-  --min_qual NUM        Quality trim threshold (default 20)
-  --nslots NUM          Threads (default 12)
   --output_pe t|f       Output QC'ed paired-end reads (default f)
   --output_merged t|f   Output merged QC'ed reads (default t)
-  --overwrite t|f       Replace existing output dir (default f)
   --pvalue NUM          p-value for PEAR (default 0.01)
+
+Optional:
+  --single_end t|f      Process as single-end reads (default f)
+  --repair t|f          Repair FASTQ before processing (default f)
+                        SE: reformat.sh fixes malformed records
+                        PE: repair.sh re-pairs mismatched reads
+  --clean t|f           Remove intermediates (default f)
+  --compress t|f        Compress outputs with pigz (default f)
+  --min_length NUM      Minimum read length after trimming (default 75)
+  --min_qual NUM        Quality trim threshold (default 20)
+  --nslots NUM          Threads (default 12)
+  --overwrite t|f       Replace existing output dir (default f)
   --plot t|f            Produce QC plots (default f)
   --sample_name STR     Name prefix (default metagenomex)
   --seed NUM            Random seed for subsampling (default 123)
@@ -67,6 +73,8 @@ R1=""
 R2=""
 SAMPLE_NAME="metagenomex"
 SEED=123
+SINGLE_END="f"
+REPAIR="f"
 SUBSAMPLE="f"
 TRIM_ADAPTERS="f"
 
@@ -89,13 +97,20 @@ R2_UNASSEM_QC=""
 R_ASSEM_QC_FA=""
 R1_UNASSEM_QC_FA=""
 R2_UNASSEM_QC_FA=""
+SE_QC=""
+SE_QC_FA=""
+R1_REFORMATTED=""
+R2_REFORMATTED=""
+R1_REPAIRED=""
+R2_REPAIRED=""
+SINGLETON_FILE=""
 
 check_cmd getopt
 
 ARGS=$(getopt -o '' \
   --long help,clean:,compress:,merger:,min_length:,min_overlap:,min_qual:,nslots:,\
 output_dir:,output_pe:,output_merged:,overwrite:,pvalue:,plot:,reads:,reads2:,\
-sample_name:,seed:,subsample:,trim_adapters: \
+sample_name:,seed:,single_end:,repair:,subsample:,trim_adapters: \
   -n "$(basename "$0")" -- "$@" \
   ) || {
   log_error "Failed to parse arguments."
@@ -123,8 +138,10 @@ while true; do
     --plot) PLOT="$2"; shift 2 ;;
     --reads) R1="$2"; shift 2 ;;
     --reads2) R2="$2"; shift 2 ;;
+    --repair) REPAIR="$2"; shift 2 ;;
     --sample_name) SAMPLE_NAME="$2"; shift 2 ;;
     --seed) SEED="$2"; shift 2 ;;
+    --single_end) SINGLE_END="$2"; shift 2 ;;
     --subsample) SUBSAMPLE="$2"; shift 2 ;;
     --trim_adapters) TRIM_ADAPTERS="$2"; shift 2 ;;
     --) shift; break ;;
@@ -141,11 +158,23 @@ if [[ -z "${OUTPUT_DIR}" ]]; then
     exit 1
 fi
 
+if [[ -z "${R1}" ]]; then
+    log_error "--reads is required."
+    exit 1
+fi
+
 check_file "${R1}"
-check_file "${R2}"
+
+if [[ "${SINGLE_END}" == "f" ]]; then
+    if [[ -z "${R2}" ]]; then
+        log_error "--reads2 is required for paired-end mode."
+        exit 1
+    fi
+    check_file "${R2}"
+fi
 
 # Validate boolean flags
-for flag in CLEAN COMPRESS OUTPUT_PE OUTPUT_MERGED OVERWRITE SUBSAMPLE TRIM_ADAPTERS PLOT; do
+for flag in CLEAN COMPRESS OUTPUT_PE OUTPUT_MERGED OVERWRITE SINGLE_END REPAIR SUBSAMPLE TRIM_ADAPTERS PLOT; do
     if ! [[ "${!flag}" =~ ^[tf]$ ]]; then
         log_error "Flag --$(echo "${flag}" | tr 'A-Z' 'a-z') must be 't' or 'f' (got '${!flag}')."
         exit 1
@@ -166,10 +195,12 @@ if ! [[ "${PVALUE}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
     exit 1
 fi
 
-# Validate merger
-if [[ "${MERGER}" != "pear" && "${MERGER}" != "bbmerge" ]]; then
-    log_error "--merger must be 'pear' or 'bbmerge' (got '${MERGER}')."
-    exit 1
+# Validate merger (PE only)
+if [[ "${SINGLE_END}" == "f" ]]; then
+    if [[ "${MERGER}" != "pear" && "${MERGER}" != "bbmerge" ]]; then
+        log_error "--merger must be 'pear' or 'bbmerge' (got '${MERGER}')."
+        exit 1
+    fi
 fi
 
 ###############################################################################
@@ -207,108 +238,179 @@ TEST_FILE_GZIP=$(file "${R1}" | grep -E "gzip" || true)
 if [[ -n "${TEST_FILE_BZIP2}" ]]; then
     log "Uncompressing bzip2 ..."
     R1_UNCOMPRESSED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1-00.fastq"
-    R2_UNCOMPRESSED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2-00.fastq"
-
     if ! "${bzip2}" --decompress --keep --stdout "${R1}" > "${R1_UNCOMPRESSED}"; then
         log_error "bzip2 R1 failed"
         exit 1
     fi
+    R1="${R1_UNCOMPRESSED}"
 
-    if ! "${bzip2}" --decompress --keep --stdout "${R2}" > "${R2_UNCOMPRESSED}"; then
-        log_error "bzip2 R2 failed"
-        exit 1
+    if [[ "${SINGLE_END}" == "f" ]]; then
+        R2_UNCOMPRESSED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2-00.fastq"
+        if ! "${bzip2}" --decompress --keep --stdout "${R2}" > "${R2_UNCOMPRESSED}"; then
+            log_error "bzip2 R2 failed"
+            exit 1
+        fi
+        R2="${R2_UNCOMPRESSED}"
     fi
 
-    R1="${R1_UNCOMPRESSED}"
-    R2="${R2_UNCOMPRESSED}"
     UNCOMPRESSED="t"
 elif [[ -n "${TEST_FILE_GZIP}" ]]; then
     log "Uncompressing gzip ..."
     R1_UNCOMPRESSED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1-00.fastq"
-    R2_UNCOMPRESSED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2-00.fastq"
-
     if ! "${gunzip}" --keep --stdout "${R1}" > "${R1_UNCOMPRESSED}"; then
         log_error "gunzip R1 failed"
         exit 1
     fi
+    R1="${R1_UNCOMPRESSED}"
 
-    if ! "${gunzip}" --keep --stdout "${R2}" > "${R2_UNCOMPRESSED}"; then
-        log_error "gunzip R2 failed"
-        exit 1
+    if [[ "${SINGLE_END}" == "f" ]]; then
+        R2_UNCOMPRESSED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2-00.fastq"
+        if ! "${gunzip}" --keep --stdout "${R2}" > "${R2_UNCOMPRESSED}"; then
+            log_error "gunzip R2 failed"
+            exit 1
+        fi
+        R2="${R2_UNCOMPRESSED}"
     fi
 
-    R1="${R1_UNCOMPRESSED}"
-    R2="${R2_UNCOMPRESSED}"
     UNCOMPRESSED="t"
 else
     log "Linking original FASTQ files..."
-    # Use absolute paths for symlinks to avoid broken links
     R1_ABS="$(realpath "${R1}")"
-    R2_ABS="$(realpath "${R2}")"
 
     if ! ln -s "${R1_ABS}" "${OUTPUT_DIR}/${SAMPLE_NAME}_R1-00.fastq"; then
         log_error "ln -s R1 failed"
         exit 1
     fi
-    if ! ln -s "${R2_ABS}" "${OUTPUT_DIR}/${SAMPLE_NAME}_R2-00.fastq"; then
-        log_error "ln -s R2 failed"
-        exit 1
-    fi
     R1="${OUTPUT_DIR}/${SAMPLE_NAME}_R1-00.fastq"
-    R2="${OUTPUT_DIR}/${SAMPLE_NAME}_R2-00.fastq"
+
+    if [[ "${SINGLE_END}" == "f" ]]; then
+        R2_ABS="$(realpath "${R2}")"
+        if ! ln -s "${R2_ABS}" "${OUTPUT_DIR}/${SAMPLE_NAME}_R2-00.fastq"; then
+            log_error "ln -s R2 failed"
+            exit 1
+        fi
+        R2="${OUTPUT_DIR}/${SAMPLE_NAME}_R2-00.fastq"
+    fi
 fi
 
 ###############################################################################
-# 8. Subsample data (optional)
+# 8. Repair FASTQ files (optional)
+###############################################################################
+
+if [[ "${REPAIR}" == "t" ]]; then
+    if [[ "${SINGLE_END}" == "t" ]]; then
+        log "Repairing single-end FASTQ with reformat.sh..."
+        R1_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_repaired-00.fastq"
+
+        if ! "${reformat}" \
+            in="${R1}" \
+            out="${R1_REPAIRED}" \
+            tossbrokenreads=t; then
+            log_error "reformat.sh repair of R1 failed"
+            exit 1
+        fi
+        R1="${R1_REPAIRED}"
+    else
+        log "Reformatting paired-end FASTQ with reformat.sh..."
+        R1_REFORMATTED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_reformatted-00.fastq"
+        R2_REFORMATTED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_reformatted-00.fastq"
+
+        if ! "${reformat}" \
+            in="${R1}" \
+            out="${R1_REFORMATTED}" \
+            tossbrokenreads=t; then
+            log_error "reformat.sh reformat of R1 failed"
+            exit 1
+        fi
+        if ! "${reformat}" \
+            in="${R2}" \
+            out="${R2_REFORMATTED}" \
+            tossbrokenreads=t; then
+            log_error "reformat.sh reformat of R2 failed"
+            exit 1
+        fi
+
+        log "Repairing paired-end FASTQ with repair.sh..."
+        R1_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_repaired-00.fastq"
+        R2_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_repaired-00.fastq"
+        SINGLETON_FILE="${OUTPUT_DIR}/${SAMPLE_NAME}_singletons_repaired-00.fastq"
+
+        if ! "${repR1_UNCOMPRESSEDair_sh}" \
+            in="${R1_REFORMATTED}" in2="${R2_REFORMATTED}" \
+            out="${R1_REPAIRED}" out2="${R2_REPAIRED}" \
+            outs="${SINGLETON_FILE}"; then
+            log_error "repair.sh failed"
+            exit 1
+        fi
+        R1="${R1_REPAIRED}"
+        R2="${R2_REPAIRED}"
+    fi
+fi
+
+###############################################################################
+# 9. Subsample data (optional)
 ###############################################################################
 
 if [[ "${SUBSAMPLE}" == "t" ]]; then
     log "Subsampling to 10,000 reads (seed: ${SEED}) ..."
     R1_REDU="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_redu-00.fastq"
-    R2_REDU="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_redu-00.fastq"
 
     if ! "${seqtk}" sample -s"${SEED}" "${R1}" 10000 > "${R1_REDU}"; then
         log_error "seqtk subsampling R1 failed"
         exit 1
     fi
-    if ! "${seqtk}" sample -s"${SEED}" "${R2}" 10000 > "${R2_REDU}"; then
-        log_error "seqtk subsampling R2 failed"
-        exit 1
-    fi
-
     R1="${R1_REDU}"
-    R2="${R2_REDU}"
+
+    if [[ "${SINGLE_END}" == "f" ]]; then
+        R2_REDU="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_redu-00.fastq"
+        if ! "${seqtk}" sample -s"${SEED}" "${R2}" 10000 > "${R2_REDU}"; then
+            log_error "seqtk subsampling R2 failed"
+            exit 1
+        fi
+        R2="${R2_REDU}"
+    fi
 fi
 
 ###############################################################################
-# 9. Adapter trimming (optional)
+# 10. Adapter trimming (optional)
 ###############################################################################
 
 if [[ "${TRIM_ADAPTERS}" == "t" ]]; then
     log "Trimming adapters ..."
-
     R1_AT="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_at-01.fastq"
-    R2_AT="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_at-01.fastq"
 
-    if ! "${bbduk}" \
-        in="${R1}" in2="${R2}" \
-        out="${R1_AT}" out2="${R2_AT}" \
-        threads="${NSLOTS}" \
-        ktrim=r k=23 mink=11 hdist=1 tpe tbo \
-        ref="${ADAPTERS}"; then
-        log_error "bbduk adapter trimming failed"
-        exit 1
+    if [[ "${SINGLE_END}" == "f" ]]; then
+        R2_AT="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_at-01.fastq"
+        if ! "${bbduk}" \
+            in="${R1}" in2="${R2}" \
+            out="${R1_AT}" out2="${R2_AT}" \
+            threads="${NSLOTS}" \
+            ktrim=r k=23 mink=11 hdist=1 tpe tbo \
+            ref="${ADAPTERS}"; then
+            log_error "bbduk adapter trimming failed"
+            exit 1
+        fi
+        R2="${R2_AT}"
+    else
+        if ! "${bbduk}" \
+            in="${R1}" \
+            out="${R1_AT}" \
+            threads="${NSLOTS}" \
+            ktrim=r k=23 mink=11 hdist=1 \
+            ref="${ADAPTERS}"; then
+            log_error "bbduk adapter trimming failed"
+            exit 1
+        fi
     fi
 
     R1="${R1_AT}"
-    R2="${R2_AT}"
 fi
 
 ###############################################################################
-# 10. Quality trim paired-end reads (optional)
+# 11. Quality trim paired-end reads (optional, PE only)
 ###############################################################################
 
-if [[ "${OUTPUT_PE}" == "t" ]]; then
+if [[ "${SINGLE_END}" == "f" && "${OUTPUT_PE}" == "t" ]]; then
     log "Quality trimming paired-end reads ..."
     R1_QC="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_qc-02.fastq"
     R2_QC="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_qc-02.fastq"
@@ -332,10 +434,10 @@ if [[ "${OUTPUT_PE}" == "t" ]]; then
 fi
 
 ###############################################################################
-# 11. Merge paired-end reads (optional)
+# 12. Merge paired-end reads (optional, PE only)
 ###############################################################################
 
-if [[ "${OUTPUT_MERGED}" == "t" ]]; then
+if [[ "${SINGLE_END}" == "f" && "${OUTPUT_MERGED}" == "t" ]]; then
     if [[ "${MERGER}" == "pear" ]]; then
         log "Merging reads with PEAR..."
         if ! "${pear}" \
@@ -388,10 +490,10 @@ if [[ "${OUTPUT_MERGED}" == "t" ]]; then
 fi
 
 ###############################################################################
-# 12. Quality check merged reads
+# 13. Quality check merged reads (PE only)
 ###############################################################################
 
-if [[ "${OUTPUT_MERGED}" == "t" && -s "${R_ASSEM}" ]]; then
+if [[ "${SINGLE_END}" == "f" && "${OUTPUT_MERGED}" == "t" && -s "${R_ASSEM}" ]]; then
     log "Quality trimming merged reads..."
     R_ASSEM_QC="${OUTPUT_DIR}/${SAMPLE_NAME}_assembled_qc-03.fastq"
 
@@ -407,10 +509,10 @@ if [[ "${OUTPUT_MERGED}" == "t" && -s "${R_ASSEM}" ]]; then
 fi
 
 ###############################################################################
-# 13. Quality check unmerged reads
+# 14. Quality check unmerged reads (PE only)
 ###############################################################################
 
-if [[ "${OUTPUT_MERGED}" == "t" && -s "${R1_UNASSEM}" ]]; then
+if [[ "${SINGLE_END}" == "f" && "${OUTPUT_MERGED}" == "t" && -s "${R1_UNASSEM}" ]]; then
     log "Quality trimming unmerged reads..."
     R1_UNASSEM_QC="${OUTPUT_DIR}/${SAMPLE_NAME}_unassembled_R1_qc-03.fastq"
     R2_UNASSEM_QC="${OUTPUT_DIR}/${SAMPLE_NAME}_unassembled_R2_qc-03.fastq"
@@ -427,12 +529,54 @@ if [[ "${OUTPUT_MERGED}" == "t" && -s "${R1_UNASSEM}" ]]; then
 fi
 
 ###############################################################################
-# 14. Convert to FASTA
+# 15. Quality trim single-end reads (SE only)
+###############################################################################
+
+if [[ "${SINGLE_END}" == "t" ]]; then
+    log "Quality trimming single-end reads..."
+    SE_QC="${OUTPUT_DIR}/${SAMPLE_NAME}_se_qc-02.fastq"
+
+    if ! "${bbduk}" \
+        in="${R1}" \
+        out="${SE_QC}" \
+        minlength="${MIN_LENGTH}" \
+        threads="${NSLOTS}" \
+        qtrim=rl trimq="${MIN_QUAL}"; then
+        log_error "bbduk quality trimming single-end reads failed"
+        exit 1
+    fi
+
+    if [[ "${COMPRESS}" == "t" ]]; then
+        if ! "${pigz}" --keep --processes "${NSLOTS}" "${SE_QC}"; then
+            log_error "pigz compressing ${SE_QC} failed"
+            exit 1
+        fi
+    fi
+fi
+
+###############################################################################
+# 16. Convert to FASTA
 ###############################################################################
 
 log "Converting to FASTA format..."
 
-if [[ "${OUTPUT_MERGED}" == "t" && -s "${R_ASSEM_QC}" ]]; then
+if [[ "${SINGLE_END}" == "t" && -s "${SE_QC}" ]]; then
+    SE_QC_FA="${OUTPUT_DIR}/${SAMPLE_NAME}_se_qc-02.fasta"
+
+    if ! "${fq2fa}" "${SE_QC}" > "${SE_QC_FA}"; then
+        log_error "fq2fa single-end reads failed"
+        exit 1
+    fi
+
+    if [[ "${COMPRESS}" == "t" ]]; then
+        if ! "${pigz}" --keep --processes "${NSLOTS}" "${SE_QC_FA}"; then
+            log_error "pigz compressing ${SE_QC_FA} failed"
+            exit 1
+        fi
+    fi
+fi
+
+if [[ "${SINGLE_END}" == "f" && "${OUTPUT_MERGED}" == "t" && -s "${R_ASSEM_QC}" ]]; then
     R_ASSEM_QC_FA="${OUTPUT_DIR}/${SAMPLE_NAME}_assembled_qc-03.fasta"
 
     if ! "${fq2fa}" "${R_ASSEM_QC}" > "${R_ASSEM_QC_FA}"; then
@@ -448,7 +592,7 @@ if [[ "${OUTPUT_MERGED}" == "t" && -s "${R_ASSEM_QC}" ]]; then
     fi
 fi
 
-if [[ "${OUTPUT_MERGED}" == "t" && -s "${R1_UNASSEM_QC}" ]]; then
+if [[ "${SINGLE_END}" == "f" && "${OUTPUT_MERGED}" == "t" && -s "${R1_UNASSEM_QC}" ]]; then
     R1_UNASSEM_QC_FA="${OUTPUT_DIR}/${SAMPLE_NAME}_unassembled_R1_qc-03.fasta"
     R2_UNASSEM_QC_FA="${OUTPUT_DIR}/${SAMPLE_NAME}_unassembled_R2_qc-03.fasta"
 
@@ -470,7 +614,7 @@ if [[ "${OUTPUT_MERGED}" == "t" && -s "${R1_UNASSEM_QC}" ]]; then
 fi
 
 ###############################################################################
-# 15. Compute stats
+# 17. Compute stats
 ###############################################################################
 
 log "Computing statistics ..."
@@ -510,7 +654,7 @@ awk -v OFS="\t" '{
 rm -f "${STATS_TMP}"
 
 ###############################################################################
-# 16. Plot stats (optional)
+# 18. Plot stats (optional)
 ###############################################################################
 
 if [[ "${PLOT}" == "t" ]]; then
@@ -525,12 +669,13 @@ if [[ "${PLOT}" == "t" ]]; then
 fi
 
 ###############################################################################
-# 17. Clean intermediates (optional)
+# 19. Clean intermediates (optional)
 ###############################################################################
 
 if [[ "${CLEAN}" == "t" ]]; then
     log "Cleaning intermediate files ..."
 
+    # 00 files
     if [[ "${UNCOMPRESSED}" == "t" ]]; then
         [[ -n "${R1_UNCOMPRESSED}" && -e "${R1_UNCOMPRESSED}" ]] && rm -f "${R1_UNCOMPRESSED}"
         [[ -n "${R2_UNCOMPRESSED}" && -e "${R2_UNCOMPRESSED}" ]] && rm -f "${R2_UNCOMPRESSED}"
@@ -541,38 +686,64 @@ if [[ "${CLEAN}" == "t" ]]; then
         [[ -n "${R2_REDU}" && -e "${R2_REDU}" ]] && rm -f "${R2_REDU}"
     fi
 
+    if [[ "${REPAIR}" == "t" ]]; then
+        [[ -n "${R1_REFORMATTED}" && -e "${R1_REFORMATTED}" ]] && rm -f "${R1_REFORMATTED}"
+        [[ -n "${R2_REFORMATTED}" && -e "${R2_REFORMATTED}" ]] && rm -f "${R2_REFORMATTED}"
+        [[ -n "${R1_REPAIRED}" && -e "${R1_REPAIRED}" ]] && rm -f "${R1_REPAIRED}"
+        [[ -n "${R2_REPAIRED}" && -e "${R2_REPAIRED}" ]] && rm -f "${R2_REPAIRED}"
+        [[ -n "${SINGLETON_FILE}" && -e "${SINGLETON_FILE}" ]] && rm -f "${SINGLETON_FILE}"
+    fi
+
+    # 01 files
     if [[ "${TRIM_ADAPTERS}" == "t" ]]; then
         [[ -n "${R1_AT}" && -e "${R1_AT}" ]] && rm -f "${R1_AT}"
         [[ -n "${R2_AT}" && -e "${R2_AT}" ]] && rm -f "${R2_AT}"
     fi
 
-    # Remove uncompressed PE QC files if they were compressed
-    if [[ "${OUTPUT_PE}" == "t" ]]; then
+    # 02 files
+    if [[ "${SINGLE_END}" == "t" ]]; then
         if [[ "${COMPRESS}" == "t" ]]; then
+            [[ -n "${SE_QC}" && -f "${SE_QC}" ]] && rm -f "${SE_QC}"
+        fi
+    else
+        if [[ "${OUTPUT_PE}" == "t" && "${COMPRESS}" == "t" ]]; then
             [[ -n "${R1_QC}" && -f "${R1_QC}" ]] && rm -f "${R1_QC}"
             [[ -n "${R2_QC}" && -f "${R2_QC}" ]] && rm -f "${R2_QC}"
         fi
-    fi
 
-    if [[ "${OUTPUT_MERGED}" == "t" ]]; then
-        for f in "${R_ASSEM}" "${R1_UNASSEM}" "${R2_UNASSEM}" "${R_DISCARD}" \
-                 "${R_ASSEM_QC}" "${R1_UNASSEM_QC}" "${R2_UNASSEM_QC}"; do
-            [[ -n "${f}" && -e "${f}" ]] && rm -f "${f}"
-        done
-
-        if [[ "${COMPRESS}" == "t" ]]; then
-            for f in "${R1_UNASSEM_QC_FA}" "${R2_UNASSEM_QC_FA}" "${R_ASSEM_QC_FA}"; do
+        if [[ "${OUTPUT_MERGED}" == "t" ]]; then
+            for f in "${R_ASSEM}" "${R1_UNASSEM}" "${R2_UNASSEM}" "${R_DISCARD}" \
+                     "${R_ASSEM_QC}" "${R1_UNASSEM_QC}" "${R2_UNASSEM_QC}"; do
                 [[ -n "${f}" && -e "${f}" ]] && rm -f "${f}"
             done
+            
+            # 03 files
+            if [[ "${COMPRESS}" == "t" ]]; then
+                for f in "${R1_UNASSEM_QC_FA}" "${R2_UNASSEM_QC_FA}" "${R_ASSEM_QC_FA}"; do
+                    [[ -n "${f}" && -e "${f}" ]] && rm -f "${f}"
+                done
+            fi
         fi
     fi
 fi
 
 ###############################################################################
-# 18. Rename to workable
+# 20. Rename to workable
 ###############################################################################
 
-if [[ "${OUTPUT_MERGED}" == "t" && -n "${R_ASSEM_QC_FA}" ]]; then
+if [[ "${SINGLE_END}" == "t" && -n "${SE_QC_FA}" ]]; then
+    if [[ "${COMPRESS}" == "t" ]]; then
+        if ! mv "${SE_QC_FA}.gz" "${OUTPUT_DIR}/${SAMPLE_NAME}_workable.fasta.gz"; then
+            log_error "Rename to workable (compressed) failed"
+            exit 1
+        fi
+    else
+        if ! mv "${SE_QC_FA}" "${OUTPUT_DIR}/${SAMPLE_NAME}_workable.fasta"; then
+            log_error "Rename to workable (uncompressed) failed"
+            exit 1
+        fi
+    fi
+elif [[ "${SINGLE_END}" == "f" && "${OUTPUT_MERGED}" == "t" && -n "${R_ASSEM_QC_FA}" ]]; then
     if [[ "${COMPRESS}" == "t" ]]; then
         if ! mv "${R_ASSEM_QC_FA}.gz" "${OUTPUT_DIR}/${SAMPLE_NAME}_workable.fasta.gz"; then
             log_error "Rename to workable (compressed) failed"
@@ -587,7 +758,7 @@ if [[ "${OUTPUT_MERGED}" == "t" && -n "${R_ASSEM_QC_FA}" ]]; then
 fi
 
 ###############################################################################
-# 19. End
+# 21. End
 ###############################################################################
 
 log "${GREEN}preprocess_pipeline.sh exited successfully${NC}"
