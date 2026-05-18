@@ -299,21 +299,8 @@ fi
 
 if [[ "${REPAIR}" == "t" ]]; then
     if [[ "${SINGLE_END}" == "t" ]]; then
-        log "Repairing single-end FASTQ with reformat.sh..."
-        R1_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_repaired-00.fastq"
-
-        if ! "${reformat}" \
-            in="${R1}" \
-            out="${R1_REPAIRED}" \
-            tossbrokenreads=t; then
-            log_error "reformat.sh repair of R1 failed"
-            exit 1
-        fi
-        R1="${R1_REPAIRED}"
-    else
-        log "Reformatting paired-end FASTQ with reformat.sh..."
+        log "Reformatting single-end FASTQ with reformat.sh..."
         R1_REFORMATTED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_reformatted-00.fastq"
-        R2_REFORMATTED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_reformatted-00.fastq"
 
         if ! "${reformat}" \
             in="${R1}" \
@@ -322,11 +309,17 @@ if [[ "${REPAIR}" == "t" ]]; then
             log_error "reformat.sh reformat of R1 failed"
             exit 1
         fi
+        R1="${R1_REFORMATTED}"
+    else
+        log "Reformatting paired-end FASTQ with reformat.sh..."
+        R1_REFORMATTED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_reformatted-00.fastq"
+        R2_REFORMATTED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_reformatted-00.fastq"
+
         if ! "${reformat}" \
-            in="${R2}" \
-            out="${R2_REFORMATTED}" \
+            in="${R1}" in2="${R2}" \
+            out="${R1_REFORMATTED}" out2="${R2_REFORMATTED}" \
             tossbrokenreads=t; then
-            log_error "reformat.sh reformat of R2 failed"
+            log_error "reformat.sh reformat of R1/R2 failed"
             exit 1
         fi
 
@@ -335,7 +328,7 @@ if [[ "${REPAIR}" == "t" ]]; then
         R2_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_repaired-00.fastq"
         SINGLETON_FILE="${OUTPUT_DIR}/${SAMPLE_NAME}_singletons_repaired-00.fastq"
 
-        if ! "${repR1_UNCOMPRESSEDair_sh}" \
+        if ! "${repair_sh}" \
             in="${R1_REFORMATTED}" in2="${R2_REFORMATTED}" \
             out="${R1_REPAIRED}" out2="${R2_REPAIRED}" \
             outs="${SINGLETON_FILE}"; then
