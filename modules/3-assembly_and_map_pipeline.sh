@@ -87,13 +87,13 @@ Usage: $(basename "$0") [OPTIONS]
 
 Required:
   --reads1 CHAR              Input R1 (or single-end) metagenome reads (fastq/fa)
-  --sample_name CHAR         Sample name used to name output files
 
 Paired-end only (ignored when --single_end=t):
   --reads2 CHAR              Input R2 metagenome reads (fastq/fa)
 
 Optional:
   --single_end t|f           Process as single-end reads (default: f)
+  --sample_name CHAR         Sample name used to name output files (default: metagenomex)
   --contigs CHAR             Path to pre-assembled contigs file (FASTA format)
                              Supports both compressed (.gz) and uncompressed files
                              Takes precedence over --assem_dir
@@ -128,7 +128,7 @@ REMOVE_DUPLICATES="f"
 SINGLE_END="f"
 R1=""
 R2=""
-SAMPLE_NAME=""
+SAMPLE_NAME="metagenomex"
 
 # Ensure getopt is available
 check_cmd getopt
@@ -192,7 +192,7 @@ done
 ###############################################################################
 
 # Mandatory parameters
-for v in R1 SAMPLE_NAME; do
+for v in R1; do
   if [[ -z "${!v}" ]]; then
     log_error "Missing mandatory parameter: --$(echo "$v" | tr '[:upper:]' '[:lower:]')"
     show_usage
