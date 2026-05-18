@@ -110,35 +110,6 @@ Optional:
   --remove_duplicates t|f    Remove PCR duplicates with Picard (default: f)
   --help                     Print this help and exit
 
-Examples:
-  # Paired-end de novo assembly with MEGAHIT:
-  $(basename "$0") \\
-    --reads1 sample_R1.fastq.gz --reads2 sample_R2.fastq.gz \\
-    --sample_name Sample1 --nslots 16 --output_dir Sample1_map
-
-  # Single-end de novo assembly with MEGAHIT:
-  $(basename "$0") \\
-    --reads1 sample_SE.fastq.gz --single_end t \\
-    --sample_name Sample1 --nslots 16 --output_dir Sample1_map
-
-  # Use pre-assembled contigs (direct path):
-  $(basename "$0") \\
-    --reads1 sample_R1.fastq.gz --reads2 sample_R2.fastq.gz \\
-    --sample_name Sample1 --contigs /path/to/Sample1.contigs.fa \\
-    --output_dir Sample1_map
-
-  # Use compressed pre-assembled contigs:
-  $(basename "$0") \\
-    --reads1 sample_R1.fastq.gz --reads2 sample_R2.fastq.gz \\
-    --sample_name Sample1 --contigs /path/to/Sample1.contigs.fa.gz \\
-    --output_dir Sample1_map
-
-  # Use pre-assembled contigs (search in directory):
-  $(basename "$0") \\
-    --reads1 sample_R1.fastq.gz --reads2 sample_R2.fastq.gz \\
-    --sample_name Sample1 --assem_dir /path/to/assemblies \\
-    --output_dir Sample1_map
-
 EOF
 }
 

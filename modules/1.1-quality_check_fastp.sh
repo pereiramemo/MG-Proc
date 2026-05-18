@@ -65,29 +65,6 @@ Options:
 
     --overwrite=t|f
         Overwrite previous directory [default=f]
-
-Examples:
-    # Paired-end (default)
-    $(basename "$0") \\
-        --input_dir=raw_data/ \\
-        --output_dir=results/qc_reports
-
-    # Single-end
-    $(basename "$0") \\
-        --input_dir=raw_data/ \\
-        --output_dir=results/qc_reports \\
-        --single_end=t \\
-        --r1_pattern=.fastq.gz
-
-    # Custom paired-end settings
-    $(basename "$0") \\
-        --input_dir=raw_data/ \\
-        --output_dir=results/qc_reports \\
-        --r1_pattern=_1.fq.gz \\
-        --r2_pattern=_2.fq.gz \\
-        --nslots=16 \\
-        --min_length=75
-
 EOF
 }
 
