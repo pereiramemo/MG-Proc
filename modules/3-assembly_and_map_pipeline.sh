@@ -109,7 +109,6 @@ Optional:
   --overwrite t|f            Overwrite previous folder if present (default: f)
   --remove_duplicates t|f    Remove PCR duplicates with Picard (default: f)
   --help                     Print this help and exit
-
 EOF
 }
 
