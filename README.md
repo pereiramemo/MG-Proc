@@ -57,146 +57,283 @@ mamba activate MG-Proc
 
 ## 1.1-quality_check_fastp.sh
 
-[1.1-quality_check_fastp.sh](modules/1.1-quality_check_fastp.sh): This script performs comprehensive quality assessment of raw Illumina reads (paired-end or single-end) using fastp. It generates HTML and JSON reports for quality control.
+[1.1-quality_check_fastp.sh](modules/1.1-quality_check_fastp.sh): Quality assessment of raw Illumina reads (paired-end or single-end) using fastp. Runs in report-only mode — input files are never modified.
 
-**Main features:**
-- Quality assessment without modifying input files
+### Main analysis
+- Batch quality assessment across all samples in an input directory
 - Paired-end and single-end read support
-- HTML and JSON report generation
-- Configurable quality and length thresholds
-- Batch processing of multiple samples
+- Per-sample HTML and JSON reports with base quality, GC content, duplication, and length distribution
+- Aggregated summary statistics table across all samples
 
-To see the help run ```./modules/1.1-quality_check_fastp.sh --help```
+### Output files
+- `reports/SAMPLE_fastp.html`: Interactive HTML quality report per sample
+- `reports/SAMPLE_fastp.json`: Machine-readable JSON quality report per sample
+- `reports/SAMPLE_fastp.log`: fastp run log per sample
+- `stats/summary.tsv`: Tab-separated table with read counts and Q20/Q30 base percentages for all samples
+- `summary_report.txt`: Plain-text run summary including parameters and aggregated statistics
 
-**Key options:**
-- `--input_dir=CHAR`: Directory containing input FASTQ files (required)
-- `--output_dir=CHAR`: Directory to output QC reports and plots (required)
-- `--single_end=t|f`: Process single-end reads instead of paired-end [default=f]
-- `--r1_pattern=CHAR`: Pattern for R1 FASTQ files, or single-end files when `--single_end=t` [default=_R1_001.fastq.gz]
-- `--r2_pattern=CHAR`: Pattern for R2 FASTQ files (ignored when `--single_end=t`) [default=_R2_001.fastq.gz]
-- `--nslots=NUM`: Number of threads to use [default=12]
-- `--min_length=NUM`: Minimum read length filter [default=50]
-- `--qualified_quality_phred=NUM`: Minimum quality value [default=20]
-- `--overwrite=t|f`: Overwrite previous directory [default=f]
+### Help
+```
+Usage: 1.1-quality_check_fastp.sh <options>
+
+Options:
+    --help
+        Print this help message and exit
+
+    --input_dir=CHAR
+        Directory containing input FASTQ files (required)
+
+    --output_dir=CHAR
+        Directory to output generated data (QC reports and plots) (required)
+
+    --single_end=t|f
+        Process single-end reads instead of paired-end [default=f]
+
+    --r1_pattern=CHAR
+        Pattern for R1 FASTQ files, or single-end files when --single_end=t
+        [default=_R1_001.fastq.gz]
+
+    --r2_pattern=CHAR
+        Pattern for R2 FASTQ files (ignored when --single_end=t)
+        [default=_R2_001.fastq.gz]
+
+    --nslots=NUM
+        Number of threads to use [default=12]
+
+    --min_length=NUM
+        Minimum read length filter (only for reporting) [default=50]
+
+    --qualified_quality_phred=NUM
+        Minimum quality value for qualified base (Phred score, only for reporting) [default=20]
+
+    --unqualified_percent_limit=NUM
+        Maximum percent of unqualified bases allowed (only for reporting) [default=40]
+
+    --disable_adapter_trimming=t|f
+        Disable adapter trimming in report [default=t]
+
+    --html_report=t|f
+        Generate HTML report [default=t]
+
+    --json_report=t|f
+        Generate JSON report [default=t]
+
+    --overwrite=t|f
+        Overwrite previous directory [default=f]
+```
+
+### Example usage
+```bash
+./modules/1.1-quality_check_fastp.sh \
+    --input_dir=raw_data/ \
+    --output_dir=results/qc_reports
+```
+
+---
 
 ## 1.2-quality_check.R
 
-[1.2-quality_check.R](modules/1.2-quality_check.R): This R script performs comprehensive quality assessment of raw Illumina paired-end reads. It generates multiple plots to evaluate read quality and identify potential issues.
+[1.2-quality_check.R](modules/1.2-quality_check.R): R script that generates summary quality plots from raw Illumina reads (paired-end or single-end). Reads FASTQ files directly and produces publication-ready PNG figures.
 
-**Main analyses:**
-- Calculation of mean quality scores for R1 and R2 reads
-- Plotting quality scores versus read counts
-- Generating histograms of read count distributions
-- Detection and quantification of PhiX contamination
+### Main analysis
+- Calculation of mean quality scores per sample for R1 (and R2 in paired-end mode)
+- Scatter plot of mean quality score versus read count
+- Histogram of read count distributions (linear and log scale)
+- Detection and quantification of PhiX contamination per sample
 
-**Output files:**
-- `r1_mean_q_vs_nseq.png`: Quality score vs read count for R1
-- `r2_mean_q_vs_nseq.png`: Quality score vs read count for R2
-- `samples_hist.png`: Histogram of read counts per sample
-- `samples_hist_log.png`: Log-transformed histogram of read counts
-- `samples_perc_phix_barplot.png`: PhiX contamination levels per sample
+### Output files
+- `r1_mean_q_vs_nseq.png`: Scatter plot of mean R1 quality score vs. number of reads per sample
+- `r2_mean_q_vs_nseq.png`: Scatter plot of mean R2 quality score vs. number of reads per sample (paired-end only)
+- `samples_hist.png`: Histogram of read counts across samples
+- `samples_hist_log.png`: Log-scale histogram of read counts across samples
+- `samples_perc_phix_barplot.png`: Bar plot of estimated PhiX contamination percentage per sample
 
-To see the help run ```Rscript modules/1.2-quality_check.R --help```
+### Help
+```
+Usage: 1.2-quality_check.R [options]
 
-**Key options:**
-- `--input_dir=CHARACTER`: Input directory with FASTQ files (required)
-- `--output_dir=CHARACTER`: Output directory for plots (required)
-- `--nslots=INTEGER`: Number of threads to use [default=12]
-- `--r1_pattern=CHARACTER`: Pattern for R1 FASTQ files [default=R1_001.fastq.gz]
-- `--r2_pattern=CHARACTER`: Pattern for R2 FASTQ files [default=R2_001.fastq.gz]
-- `--overwrite=LOGICAL`: Overwrite previous output [default=FALSE]
+Options:
+        --input_dir=CHARACTER
+                Input directory with FASTQ files
+
+        --output_dir=CHARACTER
+                Output directory for plots
+
+        --nslots=INTEGER
+                Number of threads to use [default=12]
+
+        --single_end=LOGICAL
+                Process single-end reads instead of paired-end [default=FALSE]
+
+        --r1_pattern=CHARACTER
+                Pattern for R1 FASTQ files, or single-end files when
+                --single_end=TRUE [default=R1_001.fastq.gz]
+
+        --r2_pattern=CHARACTER
+                Pattern for R2 FASTQ files (ignored when --single_end=TRUE)
+                [default=R2_001.fastq.gz]
+
+        --overwrite=LOGICAL
+                Overwrite previous output [default=FALSE]
+
+        -h, --help
+                Show this help message and exit
+```
+
+### Example usage
+```bash
+Rscript modules/1.2-quality_check.R \
+    --input_dir=raw_data/ \
+    --output_dir=results/qc_plots
+```
+
+---
 
 ## 2-preprocess_pipeline.sh
 
-[2-preprocess_pipeline.sh](modules/2-preprocess_pipeline.sh): This bash pipeline preprocesses raw Illumina reads (paired-end or single-end) from metagenomic samples.
+[2-preprocess_pipeline.sh](modules/2-preprocess_pipeline.sh): Preprocessing pipeline for raw Illumina metagenomic reads (paired-end or single-end). Produces a quality-trimmed FASTA file ready for downstream analyses such as assembly and mapping.
 
-**Main tasks:**
-- Optional FASTQ repair to fix malformed records and SRA-format extended headers (using BBTools `reformat.sh` / `repair.sh`)
-- Checking for the presence of adapters and trimming them
-- Merging paired-end reads using PEAR or BBMerge (PE only)
-- Quality trimming of merged, unmerged, and single-end reads
-- Computing and plotting read statistics (number and mean length) for intermediate files
+### Main analysis
+- Optional FASTQ repair to fix malformed records and SRA-format extended `+` headers: for SE uses `reformat.sh tossbrokenreads=t`; for PE runs `reformat.sh` on both reads jointly then `repair.sh` to restore pairing
+- Optional adapter trimming with BBDuk
+- Optional subsampling to 10,000 reads for rapid testing
+- Paired-end read merging with PEAR or BBMerge (PE only)
+- Quality trimming of merged reads, unmerged PE reads, or single-end reads with BBDuk
+- FASTQ-to-FASTA conversion of quality-trimmed output
+- Read count and mean length statistics at each processing step, with optional plots
 
-**Output files:**
-- `*workable.fasta`: FASTA file ready for downstream analyses
-- `stats.tsv`: Table with read statistics
-- `stats_plots.png`: Plot showing number of sequences and mean read length
+### Output files
+- `SAMPLE_workable.fasta` (or `.fasta.gz`): Quality-trimmed FASTA file ready for downstream analyses — merged reads (PE) or quality-trimmed reads (SE)
+- `stats.tsv`: Tab-separated table with read counts and mean lengths at each pipeline step
+- `stats_plots.png`: Plot of read counts and mean lengths across processing steps (when `--plot=t`)
+- `SAMPLE_R1_qc-02.fastq` / `SAMPLE_R2_qc-02.fastq`: Quality-trimmed paired-end FASTQ files (when `--output_pe=t`)
+- `SAMPLE_assembled_qc-03.fasta`: Quality-trimmed merged reads in FASTA (PE, when `--output_merged=t`)
+- `SAMPLE_unassembled_R1_qc-03.fasta` / `SAMPLE_unassembled_R2_qc-03.fasta`: Quality-trimmed unmerged reads in FASTA (PE, when `--output_merged=t`)
 
-Optionally, the pipeline can output quality-checked paired-end reads as FASTQ files.
+### Help
+```
+Usage: 2-preprocess_pipeline.sh [OPTIONS]
 
-To see the help run ```./modules/2-preprocess_pipeline.sh --help```
+Required:
+  --reads FILE          R1 file (or single-end file when --single_end=t)
+  --output_dir DIR      Output directory
 
-**Required options:**
-- `--reads FILE`: R1 (or single-end) FASTQ file
-- `--output_dir DIR`: Output directory
+Paired-end only (ignored when --single_end=t):
+  --reads2 FILE         R2 file
+  --merger STR          pear|bbmerge (default pear)
+  --min_overlap NUM     Minimum PE overlap for PEAR (default 10)
+  --output_pe t|f       Output QC'ed paired-end reads (default f)
+  --output_merged t|f   Output merged QC'ed reads (default t)
+  --pvalue NUM          p-value for PEAR (default 0.01)
 
-**Paired-end only options:**
-- `--reads2 FILE`: R2 FASTQ file
-- `--merger STR`: pear|bbmerge [default=pear]
-- `--min_overlap NUM`: Minimum PE overlap for PEAR [default=10]
-- `--output_pe t|f`: Output QC'ed paired-end reads [default=f]
-- `--output_merged t|f`: Output merged QC'ed reads [default=t]
-- `--pvalue NUM`: p-value for PEAR [default=0.01]
+Optional:
+  --single_end t|f      Process as single-end reads (default f)
+  --repair t|f          Repair FASTQ before processing (default f)
+                        SE: reformat.sh fixes malformed records
+                        PE: repair.sh re-pairs mismatched reads
+  --clean t|f           Remove intermediates (default f)
+  --compress t|f        Compress outputs with pigz (default f)
+  --min_length NUM      Minimum read length after trimming (default 75)
+  --min_qual NUM        Quality trim threshold (default 20)
+  --nslots NUM          Threads (default 12)
+  --overwrite t|f       Replace existing output dir (default f)
+  --plot t|f            Produce QC plots (default f)
+  --sample_name STR     Name prefix (default metagenomex)
+  --seed NUM            Random seed for subsampling (default 123)
+  --subsample t|f       Subsample to 10k reads (default f)
+  --trim_adapters t|f   Remove adapters (default f)
+  --help                Show this help
+```
 
-**Optional parameters:**
-- `--single_end t|f`: Process as single-end reads [default=f]
-- `--repair t|f`: Repair FASTQ before processing [default=f]. For SE: runs `reformat.sh tossbrokenreads=t` to fix malformed records. For PE: first reformats R1/R2 together with `reformat.sh`, then re-pairs with `repair.sh`. Useful for SRA-downloaded data with extended `+` header lines
-- `--clean t|f`: Remove intermediates [default=f]
-- `--compress t|f`: Compress outputs with pigz [default=f]
-- `--min_length NUM`: Minimum read length after trimming [default=75]
-- `--min_qual NUM`: Quality trim threshold [default=20]
-- `--nslots NUM`: Threads [default=12]
-- `--overwrite t|f`: Replace existing output dir [default=f]
-- `--plot t|f`: Produce QC plots [default=f]
-- `--sample_name STR`: Name prefix [default=metagenomex]
-- `--seed NUM`: Random seed for subsampling [default=123]
-- `--subsample t|f`: Subsample to 10k reads [default=f]
-- `--trim_adapters t|f`: Remove adapters [default=f]
+### Example usage
+```bash
+# Paired-end with adapter trimming and merging
+./modules/2-preprocess_pipeline.sh \
+    --reads sample_R1.fastq.gz \
+    --reads2 sample_R2.fastq.gz \
+    --output_dir results/sample1_preproc \
+    --trim_adapters=t \
+    --output_merged=t \
+    --sample_name=sample1
+
+# Single-end with repair (e.g. SRA data)
+./modules/2-preprocess_pipeline.sh \
+    --reads sample_SE.fastq \
+    --single_end=t \
+    --repair=t \
+    --output_dir results/sample1_preproc \
+    --sample_name=sample1
+```
+
+---
 
 ## 3-assembly_and_map_pipeline.sh
 
-[3-assembly_and_map_pipeline.sh](modules/3-assembly_and_map_pipeline.sh): This pipeline performs de novo assembly of metagenomic reads (paired-end or single-end, or using pre-assembled contigs) and maps reads back to the assembled contigs.
+[3-assembly_and_map_pipeline.sh](modules/3-assembly_and_map_pipeline.sh): De novo assembly and read mapping pipeline for metagenomic samples. Supports paired-end and single-end reads, and can use pre-assembled contigs instead of running assembly.
 
-**Main tasks:**
-- De novo assembly using MEGAHIT (optional — can use pre-assembled contigs). Supports both paired-end (`-1`/`-2`) and single-end (`-r`) MEGAHIT modes
-- Read mapping using BWA-MEM with quality filtering (q≥10, primary alignments only)
-- BAM file sorting and indexing
-- Duplicate removal using Picard (optional)
-- Automatic cleanup of intermediate files and BWA indices
+### Main analysis
+- De novo assembly with MEGAHIT using paired-end (`-1`/`-2`) or single-end (`-r`) mode; alternatively, accepts pre-assembled contigs via `--contigs` or `--assem_dir`
+- Read mapping against assembled contigs with BWA-MEM, filtering for primary alignments with mapping quality ≥ 10
+- BAM sorting and indexing with SAMtools
+- Optional PCR duplicate marking and removal with Picard MarkDuplicates
+- Automatic cleanup of intermediate files and BWA index files
 
-**Key features:**
-- Paired-end and single-end read support throughout (assembly and mapping)
-- Flexible input: run de novo assembly or use existing contigs (supports .gz compressed files)
-- Smart contig file discovery with multiple naming patterns
-- Quality control: skips processing if < 5 contigs (graceful exit)
-- Memory-efficient: direct BAM conversion (avoids large SAM files)
-- Clean output: removes intermediate files and BWA indices automatically
+### Output files
+- `SAMPLE_sorted.bam`: Sorted BAM file of reads mapped to the assembly (when `--remove_duplicates=f`)
+- `SAMPLE_sorted.bam.bai`: Index for the sorted BAM file
+- `SAMPLE_sorted_markdup.bam`: Sorted, duplicate-removed BAM file (when `--remove_duplicates=t`)
+- `SAMPLE_sorted_markdup.bam.bai`: Index for the duplicate-removed BAM file
+- `SAMPLE_sorted_markdup.metrics.txt`: Picard duplicate metrics report (when `--remove_duplicates=t`)
+- `SAMPLE.contigs.fa`: Assembled contigs in FASTA format (when MEGAHIT is run)
 
-To see the help run ```./modules/3-assembly_and_map_pipeline.sh --help```
+### Help
+```
+Usage: 3-assembly_and_map_pipeline.sh [OPTIONS]
 
-**Required options:**
-- `--reads1 CHAR`: Input R1 (or single-end) metagenome reads (fastq/fa)
-- `--sample_name CHAR`: Sample name used to name the files
+Required:
+  --reads1 CHAR              Input R1 (or single-end) metagenome reads (fastq/fa)
+  --sample_name CHAR         Sample name used to name output files
 
-**Paired-end only options:**
-- `--reads2 CHAR`: Input R2 metagenome reads (fastq/fa)
+Paired-end only (ignored when --single_end=t):
+  --reads2 CHAR              Input R2 metagenome reads (fastq/fa)
 
-**Optional parameters:**
-- `--single_end t|f`: Process as single-end reads [default=f]
-- `--contigs CHAR`: Path to pre-assembled contigs file (FASTA format). Supports both compressed (.gz) and uncompressed files. Takes precedence over `--assem_dir`
-- `--assem_dir CHAR`: Directory with previously computed assemblies. Will search for `SAMPLE_NAME.contigs.{fa,fasta,fna}[.gz]` in `ASSEM_DIR/` or `ASSEM_DIR/SAMPLE_NAME/`. Supports both compressed (.gz) and uncompressed files
-- `--assem_preset CHAR`: MEGAHIT preset to generate assembly [default=meta-sensitive]
-- `--nslots NUM`: Number of threads used [default=12]
-- `--min_contig_length NUM`: Minimum length of contigs to keep [default=250]
-- `--output_dir CHAR`: Output directory [default=mg-clust_output-1]
-- `--overwrite t|f`: Overwrite previous folder if present [default=f]
-- `--remove_duplicates t|f`: Remove PCR duplicates with Picard [default=f]
+Optional:
+  --single_end t|f           Process as single-end reads (default: f)
+  --contigs CHAR             Path to pre-assembled contigs file (FASTA format)
+                             Supports both compressed (.gz) and uncompressed files
+                             Takes precedence over --assem_dir
+  --assem_dir CHAR           Directory with previously computed assemblies
+                             Will search for: SAMPLE_NAME.contigs.{fa,fasta,fna}[.gz]
+                             in ASSEM_DIR/ or ASSEM_DIR/SAMPLE_NAME/
+                             Supports both compressed (.gz) and uncompressed files
+  --assem_preset CHAR        MEGAHIT preset to generate assembly
+                             (default: meta-sensitive)
+  --nslots NUM               Number of threads used (default: 12)
+  --min_contig_length NUM    Minimum length of contigs to keep (default: 250)
+  --output_dir CHAR          Output directory (default: mg-clust_output-1)
+  --overwrite t|f            Overwrite previous folder if present (default: f)
+  --remove_duplicates t|f    Remove PCR duplicates with Picard (default: f)
+  --help                     Print this help and exit
+```
 
-**Output files:**
-- `SAMPLE_NAME_sorted.bam` (or `SAMPLE_NAME_sorted_markdup.bam` if duplicates removed): Final BAM file
-- `SAMPLE_NAME_sorted.bam.bai` (or `SAMPLE_NAME_sorted_markdup.bam.bai`): BAM index
-- `SAMPLE_NAME.contigs.fa`: Assembly file (if MEGAHIT was run)
-- `SAMPLE_NAME_sorted_markdup.metrics.txt`: Picard duplicate metrics (if duplicates removed)
+### Example usage
+```bash
+# Paired-end de novo assembly and mapping
+./modules/3-assembly_and_map_pipeline.sh \
+    --reads1 sample_R1.fastq.gz \
+    --reads2 sample_R2.fastq.gz \
+    --sample_name sample1 \
+    --nslots 16 \
+    --output_dir results/sample1_assembly
+
+# Single-end de novo assembly and mapping
+./modules/3-assembly_and_map_pipeline.sh \
+    --reads1 sample_SE.fastq.gz \
+    --single_end t \
+    --sample_name sample1 \
+    --nslots 16 \
+    --output_dir results/sample1_assembly
+```
 
 # **Dependencies**
 
