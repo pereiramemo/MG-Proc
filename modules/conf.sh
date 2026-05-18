@@ -14,10 +14,10 @@ if [[ "${CONDA_DEFAULT_ENV}" != "MG-Proc" ]]; then
   
   # Try to find conda/mamba
   if command -v mamba &> /dev/null; then
-    eval "$(mamba shell.bash hook)"
+    eval "$(mamba shell hook --shell bash)"
     mamba activate MG-Proc
   elif command -v conda &> /dev/null; then
-    eval "$(conda shell.bash hook)"
+    eval "$(conda shell hook --shell bash)"
     conda activate MG-Proc
   else
     echo "ERROR: Neither mamba nor conda found in PATH"
@@ -46,6 +46,8 @@ MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # tools (using conda environment)
 bbduk="bbduk.sh"
 bbmerge="bbmerge.sh"
+reformat="reformat.sh"
+repair_sh="repair.sh"
 seqtk="seqtk"
 pear="pear"
 bzip2="bzip2"
