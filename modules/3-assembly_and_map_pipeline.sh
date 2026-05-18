@@ -86,11 +86,14 @@ show_usage() {
 Usage: $(basename "$0") [OPTIONS]
 
 Required:
-  --reads1 CHAR              Input R1 metagenome data (fastq/fa)
-  --reads2 CHAR              Input R2 metagenome data (fastq/fa)
-  --sample_name CHAR         Sample name used to name the files
+  --reads1 CHAR              Input R1 (or single-end) metagenome reads (fastq/fa)
+  --sample_name CHAR         Sample name used to name output files
+
+Paired-end only (ignored when --single_end=t):
+  --reads2 CHAR              Input R2 metagenome reads (fastq/fa)
 
 Optional:
+  --single_end t|f           Process as single-end reads (default: f)
   --contigs CHAR             Path to pre-assembled contigs file (FASTA format)
                              Supports both compressed (.gz) and uncompressed files
                              Takes precedence over --assem_dir
@@ -108,9 +111,14 @@ Optional:
   --help                     Print this help and exit
 
 Examples:
-  # Run de novo assembly with MEGAHIT:
+  # Paired-end de novo assembly with MEGAHIT:
   $(basename "$0") \\
     --reads1 sample_R1.fastq.gz --reads2 sample_R2.fastq.gz \\
+    --sample_name Sample1 --nslots 16 --output_dir Sample1_map
+
+  # Single-end de novo assembly with MEGAHIT:
+  $(basename "$0") \\
+    --reads1 sample_SE.fastq.gz --single_end t \\
     --sample_name Sample1 --nslots 16 --output_dir Sample1_map
 
   # Use pre-assembled contigs (direct path):
@@ -147,6 +155,7 @@ MIN_CONTIG_LENGTH=250
 OUTPUT_DIR="mg-clust_output-1"
 OVERWRITE="f"
 REMOVE_DUPLICATES="f"
+SINGLE_END="f"
 R1=""
 R2=""
 SAMPLE_NAME=""
@@ -156,7 +165,7 @@ check_cmd getopt
 
 ARGS=$(
   getopt -o '' \
-    --long help,contigs:,assem_dir:,assem_preset:,nslots:,min_contig_length:,output_dir:,overwrite:,remove_duplicates:,reads1:,reads2:,sample_name: \
+    --long help,contigs:,assem_dir:,assem_preset:,nslots:,min_contig_length:,output_dir:,overwrite:,remove_duplicates:,single_end:,reads1:,reads2:,sample_name: \
     -n "$(basename "$0")" -- "$@" \
 ) || {
   log_error "Failed to parse arguments."
@@ -188,6 +197,8 @@ while true; do
       OVERWRITE="$2"; shift 2 ;;
     --remove_duplicates)
       REMOVE_DUPLICATES="$2"; shift 2 ;;
+    --single_end)
+      SINGLE_END="$2"; shift 2 ;;
     --reads1)
       R1="$2"; shift 2 ;;
     --reads2)
@@ -211,7 +222,7 @@ done
 ###############################################################################
 
 # Mandatory parameters
-for v in R1 R2 SAMPLE_NAME; do
+for v in R1 SAMPLE_NAME; do
   if [[ -z "${!v}" ]]; then
     log_error "Missing mandatory parameter: --$(echo "$v" | tr '[:upper:]' '[:lower:]')"
     show_usage
@@ -219,16 +230,19 @@ for v in R1 R2 SAMPLE_NAME; do
   fi
 done
 
-# Simple validation for boolean flags
-if [[ "${OVERWRITE}" != "t" && "${OVERWRITE}" != "f" ]]; then
-  log_error "--overwrite must be 't' or 'f' (got '${OVERWRITE}')"
+if [[ "${SINGLE_END}" == "f" && -z "${R2}" ]]; then
+  log_error "Missing mandatory parameter: --reads2 (required for paired-end mode)"
+  show_usage
   exit 1
 fi
 
-if [[ "${REMOVE_DUPLICATES}" != "t" && "${REMOVE_DUPLICATES}" != "f" ]]; then
-  log_error "--remove_duplicates must be 't' or 'f' (got '${REMOVE_DUPLICATES}')"
-  exit 1
-fi
+# Simple validation for boolean flags
+for flag in OVERWRITE REMOVE_DUPLICATES SINGLE_END; do
+  if ! [[ "${!flag}" =~ ^[tf]$ ]]; then
+    log_error "--$(echo "${flag}" | tr '[:upper:]' '[:lower:]') must be 't' or 'f' (got '${!flag}')"
+    exit 1
+  fi
+done
 
 # Numeric validations
 if ! [[ "${NSLOTS}" =~ ^[0-9]+$ ]]; then
@@ -252,7 +266,9 @@ check_dependencies
 ###############################################################################
 
 check_file "${R1}" "read1"
-check_file "${R2}" "read2"
+if [[ "${SINGLE_END}" == "f" ]]; then
+  check_file "${R2}" "read2"
+fi
 
 ###############################################################################
 ### 7. Create output folder
@@ -326,14 +342,24 @@ elif [[ -n "${ASSEM_DIR}" ]]; then
 else
   log "Running MEGAHIT assembly..."
 
-  "${megahit}" \
-    --num-cpu-threads "${NSLOTS}" \
-    -1 "${R1}" \
-    -2 "${R2}" \
-    --presets "${ASSEM_PRESET}" \
-    --min-contig-len "${MIN_CONTIG_LENGTH}" \
-    --out-prefix "${SAMPLE_NAME}" \
-    --out-dir "${OUTPUT_DIR}"
+  if [[ "${SINGLE_END}" == "t" ]]; then
+    "${megahit}" \
+      --num-cpu-threads "${NSLOTS}" \
+      -r "${R1}" \
+      --presets "${ASSEM_PRESET}" \
+      --min-contig-len "${MIN_CONTIG_LENGTH}" \
+      --out-prefix "${SAMPLE_NAME}" \
+      --out-dir "${OUTPUT_DIR}"
+  else
+    "${megahit}" \
+      --num-cpu-threads "${NSLOTS}" \
+      -1 "${R1}" \
+      -2 "${R2}" \
+      --presets "${ASSEM_PRESET}" \
+      --min-contig-len "${MIN_CONTIG_LENGTH}" \
+      --out-prefix "${SAMPLE_NAME}" \
+      --out-dir "${OUTPUT_DIR}"
+  fi
 
   log "MEGAHIT completed."
 
@@ -403,11 +429,19 @@ log "Indexing assembly with BWA..."
 
 # Map reads and convert directly to BAM (avoid huge SAM files)
 log "Mapping reads with BWA-MEM and converting to BAM (q>=10, primary alignments)..."
-"${bwa}" mem -M -t "${NSLOTS}" "${ASSEMBLY_FILE}" "${R1}" "${R2}" | \
-  "${samtools}" view -@ "${NSLOTS}" -q 10 -F 260 -b > "${OUTPUT_DIR}/${SAMPLE_NAME}.bam" || {
-  log_error "bwa mem or samtools view failed."
-  exit 1
-}
+if [[ "${SINGLE_END}" == "t" ]]; then
+  "${bwa}" mem -M -t "${NSLOTS}" "${ASSEMBLY_FILE}" "${R1}" | \
+    "${samtools}" view -@ "${NSLOTS}" -q 10 -F 260 -b > "${OUTPUT_DIR}/${SAMPLE_NAME}.bam" || {
+    log_error "bwa mem or samtools view failed."
+    exit 1
+  }
+else
+  "${bwa}" mem -M -t "${NSLOTS}" "${ASSEMBLY_FILE}" "${R1}" "${R2}" | \
+    "${samtools}" view -@ "${NSLOTS}" -q 10 -F 260 -b > "${OUTPUT_DIR}/${SAMPLE_NAME}.bam" || {
+    log_error "bwa mem or samtools view failed."
+    exit 1
+  }
+fi
 
 # Sort BAM
 log "Sorting BAM..."
