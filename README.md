@@ -57,22 +57,23 @@ mamba activate MG-Proc
 
 ## 1.1-quality_check_fastp.sh
 
-[1.1-quality_check_fastp.sh](modules/1.1-quality_check_fastp.sh): This script performs comprehensive quality assessment of raw Illumina paired-end reads using fastp. It generates HTML and JSON reports for quality control.
+[1.1-quality_check_fastp.sh](modules/1.1-quality_check_fastp.sh): This script performs comprehensive quality assessment of raw Illumina reads (paired-end or single-end) using fastp. It generates HTML and JSON reports for quality control.
 
 **Main features:**
 - Quality assessment without modifying input files
+- Paired-end and single-end read support
 - HTML and JSON report generation
 - Configurable quality and length thresholds
 - Batch processing of multiple samples
-- PhiX contamination detection
 
 To see the help run ```./modules/1.1-quality_check_fastp.sh --help```
 
 **Key options:**
 - `--input_dir=CHAR`: Directory containing input FASTQ files (required)
 - `--output_dir=CHAR`: Directory to output QC reports and plots (required)
-- `--pattern_r1=CHAR`: Pattern for R1 FASTQ files [default=_R1_001.fastq.gz]
-- `--pattern_r2=CHAR`: Pattern for R2 FASTQ files [default=_R2_001.fastq.gz]
+- `--single_end=t|f`: Process single-end reads instead of paired-end [default=f]
+- `--r1_pattern=CHAR`: Pattern for R1 FASTQ files, or single-end files when `--single_end=t` [default=_R1_001.fastq.gz]
+- `--r2_pattern=CHAR`: Pattern for R2 FASTQ files (ignored when `--single_end=t`) [default=_R2_001.fastq.gz]
 - `--nslots=NUM`: Number of threads to use [default=12]
 - `--min_length=NUM`: Minimum read length filter [default=50]
 - `--qualified_quality_phred=NUM`: Minimum quality value [default=20]
@@ -107,16 +108,17 @@ To see the help run ```Rscript modules/1.2-quality_check.R --help```
 
 ## 2-preprocess_pipeline.sh
 
-[2-preprocess_pipeline.sh](modules/2-preprocess_pipeline.sh): This bash pipeline preprocesses raw Illumina paired-end reads from metagenomic samples.
+[2-preprocess_pipeline.sh](modules/2-preprocess_pipeline.sh): This bash pipeline preprocesses raw Illumina reads (paired-end or single-end) from metagenomic samples.
 
 **Main tasks:**
+- Optional FASTQ repair to fix malformed records and SRA-format extended headers (using BBTools `reformat.sh` / `repair.sh`)
 - Checking for the presence of adapters and trimming them
-- Merging paired-end reads using PEAR or BBMerge
-- Quality trimming of merged and unmerged reads
+- Merging paired-end reads using PEAR or BBMerge (PE only)
+- Quality trimming of merged, unmerged, and single-end reads
 - Computing and plotting read statistics (number and mean length) for intermediate files
 
 **Output files:**
-- `*workable.fasta`: FASTA file ready for downstream analyses (merged reads)
+- `*workable.fasta`: FASTA file ready for downstream analyses
 - `stats.tsv`: Table with read statistics
 - `stats_plots.png`: Plot showing number of sequences and mean read length
 
@@ -125,22 +127,26 @@ Optionally, the pipeline can output quality-checked paired-end reads as FASTQ fi
 To see the help run ```./modules/2-preprocess_pipeline.sh --help```
 
 **Required options:**
-- `--reads FILE`: R1 file
-- `--reads2 FILE`: R2 file
+- `--reads FILE`: R1 (or single-end) FASTQ file
 - `--output_dir DIR`: Output directory
 
-**Optional parameters:**
-- `--clean t|f`: Remove intermediates [default=f]
-- `--compress t|f`: Compress outputs with pigz [default=f]
+**Paired-end only options:**
+- `--reads2 FILE`: R2 FASTQ file
 - `--merger STR`: pear|bbmerge [default=pear]
-- `--min_length NUM`: Minimum read length after trimming [default=75]
 - `--min_overlap NUM`: Minimum PE overlap for PEAR [default=10]
-- `--min_qual NUM`: Quality trim threshold [default=20]
-- `--nslots NUM`: Threads [default=12]
 - `--output_pe t|f`: Output QC'ed paired-end reads [default=f]
 - `--output_merged t|f`: Output merged QC'ed reads [default=t]
-- `--overwrite t|f`: Replace existing output dir [default=f]
 - `--pvalue NUM`: p-value for PEAR [default=0.01]
+
+**Optional parameters:**
+- `--single_end t|f`: Process as single-end reads [default=f]
+- `--repair t|f`: Repair FASTQ before processing [default=f]. For SE: runs `reformat.sh tossbrokenreads=t` to fix malformed records. For PE: first reformats R1/R2 together with `reformat.sh`, then re-pairs with `repair.sh`. Useful for SRA-downloaded data with extended `+` header lines
+- `--clean t|f`: Remove intermediates [default=f]
+- `--compress t|f`: Compress outputs with pigz [default=f]
+- `--min_length NUM`: Minimum read length after trimming [default=75]
+- `--min_qual NUM`: Quality trim threshold [default=20]
+- `--nslots NUM`: Threads [default=12]
+- `--overwrite t|f`: Replace existing output dir [default=f]
 - `--plot t|f`: Produce QC plots [default=f]
 - `--sample_name STR`: Name prefix [default=metagenomex]
 - `--seed NUM`: Random seed for subsampling [default=123]
@@ -149,16 +155,17 @@ To see the help run ```./modules/2-preprocess_pipeline.sh --help```
 
 ## 3-assembly_and_map_pipeline.sh
 
-[3-assembly_and_map_pipeline.sh](modules/3-assembly_and_map_pipeline.sh): This pipeline performs de novo assembly of metagenomic reads (or uses pre-assembled contigs) and maps reads back to the assembled contigs.
+[3-assembly_and_map_pipeline.sh](modules/3-assembly_and_map_pipeline.sh): This pipeline performs de novo assembly of metagenomic reads (paired-end or single-end, or using pre-assembled contigs) and maps reads back to the assembled contigs.
 
 **Main tasks:**
-- De novo assembly using MEGAHIT (optional - can use pre-assembled contigs)
+- De novo assembly using MEGAHIT (optional — can use pre-assembled contigs). Supports both paired-end (`-1`/`-2`) and single-end (`-r`) MEGAHIT modes
 - Read mapping using BWA-MEM with quality filtering (q≥10, primary alignments only)
 - BAM file sorting and indexing
 - Duplicate removal using Picard (optional)
 - Automatic cleanup of intermediate files and BWA indices
 
 **Key features:**
+- Paired-end and single-end read support throughout (assembly and mapping)
 - Flexible input: run de novo assembly or use existing contigs (supports .gz compressed files)
 - Smart contig file discovery with multiple naming patterns
 - Quality control: skips processing if < 5 contigs (graceful exit)
@@ -168,11 +175,14 @@ To see the help run ```./modules/2-preprocess_pipeline.sh --help```
 To see the help run ```./modules/3-assembly_and_map_pipeline.sh --help```
 
 **Required options:**
-- `--reads1 CHAR`: Input R1 metagenome data (fastq/fa)
-- `--reads2 CHAR`: Input R2 metagenome data (fastq/fa)
+- `--reads1 CHAR`: Input R1 (or single-end) metagenome reads (fastq/fa)
 - `--sample_name CHAR`: Sample name used to name the files
 
+**Paired-end only options:**
+- `--reads2 CHAR`: Input R2 metagenome reads (fastq/fa)
+
 **Optional parameters:**
+- `--single_end t|f`: Process as single-end reads [default=f]
 - `--contigs CHAR`: Path to pre-assembled contigs file (FASTA format). Supports both compressed (.gz) and uncompressed files. Takes precedence over `--assem_dir`
 - `--assem_dir CHAR`: Directory with previously computed assemblies. Will search for `SAMPLE_NAME.contigs.{fa,fasta,fna}[.gz]` in `ASSEM_DIR/` or `ASSEM_DIR/SAMPLE_NAME/`. Supports both compressed (.gz) and uncompressed files
 - `--assem_preset CHAR`: MEGAHIT preset to generate assembly [default=meta-sensitive]
