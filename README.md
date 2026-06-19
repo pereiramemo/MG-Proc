@@ -194,7 +194,8 @@ Rscript modules/1.2-quality_check.R \
 [2-preprocess_pipeline.sh](modules/2-preprocess_pipeline.sh): Preprocessing pipeline for raw Illumina metagenomic reads (paired-end or single-end). Produces a quality-trimmed FASTA file ready for downstream analyses such as assembly and mapping.
 
 ### Main analysis
-- Optional FASTQ repair to fix malformed records and SRA-format extended `+` headers: for SE uses `reformat.sh tossbrokenreads=t`; for PE runs `reformat.sh` on both reads jointly then `repair.sh` to restore pairing
+- Optional FASTQ reformat (`--reformat=t`): runs `reformat.sh tossbrokenreads=t` to fix malformed records and SRA-format extended `+` headers (SE and PE)
+- Optional FASTQ repair (`--repair=t`): runs `reformat.sh` first, then `repair.sh` to restore mate pairing (PE only; SE gets reformat only)
 - Optional adapter trimming with BBDuk
 - Optional subsampling to 10,000 reads for rapid testing
 - Paired-end read merging with PEAR or BBMerge (PE only)
@@ -204,11 +205,12 @@ Rscript modules/1.2-quality_check.R \
 
 ### Output files
 - `SAMPLE_workable.fasta` (or `.fasta.gz`): Quality-trimmed FASTA file ready for downstream analyses — merged reads (PE) or quality-trimmed reads (SE)
-- `stats.tsv`: Tab-separated table with read counts and mean lengths at each pipeline step
+- `stats.tsv`: Tab-separated table with read counts and mean lengths at each pipeline step; includes one row per intermediate FASTQ file, including singletons discarded by `repair.sh` when `--repair=t`
 - `stats_plots.png`: Plot of read counts and mean lengths across processing steps (when `--plot=t`)
 - `SAMPLE_R1_qc-02.fastq` / `SAMPLE_R2_qc-02.fastq`: Quality-trimmed paired-end FASTQ files (when `--output_pe=t`)
 - `SAMPLE_assembled_qc-03.fasta`: Quality-trimmed merged reads in FASTA (PE, when `--output_merged=t`)
 - `SAMPLE_unassembled_R1_qc-03.fasta` / `SAMPLE_unassembled_R2_qc-03.fasta`: Quality-trimmed unmerged reads in FASTA (PE, when `--output_merged=t`)
+- `SAMPLE_singletons_repaired-00.fastq`: PE reads that lost their mate during `repair.sh` and could not be re-paired (PE only, when `--repair=t`); included in `stats.tsv` as a record of discarded reads
 
 ### Help
 ```
@@ -228,9 +230,10 @@ Paired-end only (ignored when --single_end=t):
 
 Optional:
   --single_end t|f      Process as single-end reads (default f)
-  --repair t|f          Repair FASTQ before processing (default f)
-                        SE: reformat.sh fixes malformed records
-                        PE: repair.sh re-pairs mismatched reads
+  --reformat t|f        Reformat FASTQ with reformat.sh (default f)
+                        Fixes malformed records and SRA extended + headers
+  --repair t|f          Reformat + repair FASTQ (default f)
+                        Runs reformat.sh then repair.sh (repair.sh PE only)
   --clean t|f           Remove intermediates (default f)
   --compress t|f        Compress outputs with pigz (default f)
   --min_length NUM      Minimum read length after trimming (default 75)

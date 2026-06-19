@@ -94,7 +94,7 @@ function check_dependencies {
   local missing_tools=()
   
   # Check command-line tools
-  for tool in bbduk.sh bbmerge.sh seqtk pear bzip2 gunzip pigz megahit bwa samtools; do
+  for tool in bbduk.sh bbmerge.sh reformat.sh repair.sh seqtk pear bzip2 gunzip pigz megahit bwa samtools; do
     if ! command -v ${tool} &> /dev/null; then
       missing_tools+=("${tool}")
     fi

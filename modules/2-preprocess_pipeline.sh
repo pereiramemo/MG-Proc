@@ -34,9 +34,10 @@ Paired-end only (ignored when --single_end=t):
 
 Optional:
   --single_end t|f      Process as single-end reads (default f)
-  --repair t|f          Repair FASTQ before processing (default f)
-                        SE: reformat.sh fixes malformed records
-                        PE: repair.sh re-pairs mismatched reads
+  --reformat t|f        Reformat FASTQ with reformat.sh (default f)
+                        Fixes malformed records and SRA extended + headers
+  --repair t|f          Reformat + repair FASTQ (default f)
+                        Runs reformat.sh then repair.sh (repair.sh PE only)
   --clean t|f           Remove intermediates (default f)
   --compress t|f        Compress outputs with pigz (default f)
   --min_length NUM      Minimum read length after trimming (default 75)
@@ -74,6 +75,7 @@ R2=""
 SAMPLE_NAME="metagenomex"
 SEED=123
 SINGLE_END="f"
+REFORMAT="f"
 REPAIR="f"
 SUBSAMPLE="f"
 TRIM_ADAPTERS="f"
@@ -110,7 +112,7 @@ check_cmd getopt
 ARGS=$(getopt -o '' \
   --long help,clean:,compress:,merger:,min_length:,min_overlap:,min_qual:,nslots:,\
 output_dir:,output_pe:,output_merged:,overwrite:,pvalue:,plot:,reads:,reads2:,\
-sample_name:,seed:,single_end:,repair:,subsample:,trim_adapters: \
+sample_name:,seed:,single_end:,reformat:,repair:,subsample:,trim_adapters: \
   -n "$(basename "$0")" -- "$@" \
   ) || {
   log_error "Failed to parse arguments."
@@ -138,6 +140,7 @@ while true; do
     --plot) PLOT="$2"; shift 2 ;;
     --reads) R1="$2"; shift 2 ;;
     --reads2) R2="$2"; shift 2 ;;
+    --reformat) REFORMAT="$2"; shift 2 ;;
     --repair) REPAIR="$2"; shift 2 ;;
     --sample_name) SAMPLE_NAME="$2"; shift 2 ;;
     --seed) SEED="$2"; shift 2 ;;
@@ -174,7 +177,7 @@ if [[ "${SINGLE_END}" == "f" ]]; then
 fi
 
 # Validate boolean flags
-for flag in CLEAN COMPRESS OUTPUT_PE OUTPUT_MERGED OVERWRITE SINGLE_END REPAIR SUBSAMPLE TRIM_ADAPTERS PLOT; do
+for flag in CLEAN COMPRESS OUTPUT_PE OUTPUT_MERGED OVERWRITE SINGLE_END REFORMAT REPAIR SUBSAMPLE TRIM_ADAPTERS PLOT; do
     if ! [[ "${!flag}" =~ ^[tf]$ ]]; then
         log_error "Flag --$(echo "${flag}" | tr 'A-Z' 'a-z') must be 't' or 'f' (got '${!flag}')."
         exit 1
@@ -294,10 +297,11 @@ else
 fi
 
 ###############################################################################
-# 8. Repair FASTQ files (optional)
+# 8. Reformat and/or repair FASTQ files (optional)
 ###############################################################################
 
-if [[ "${REPAIR}" == "t" ]]; then
+# Reformat: runs when --reformat=t or --repair=t (repair implies reformat)
+if [[ "${REFORMAT}" == "t" || "${REPAIR}" == "t" ]]; then
     if [[ "${SINGLE_END}" == "t" ]]; then
         log "Reformatting single-end FASTQ with reformat.sh..."
         R1_REFORMATTED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_reformatted-00.fastq"
@@ -306,7 +310,7 @@ if [[ "${REPAIR}" == "t" ]]; then
             in="${R1}" \
             out="${R1_REFORMATTED}" \
             tossbrokenreads=t; then
-            log_error "reformat.sh reformat of R1 failed"
+            log_error "reformat.sh failed for R1"
             exit 1
         fi
         R1="${R1_REFORMATTED}"
@@ -317,27 +321,34 @@ if [[ "${REPAIR}" == "t" ]]; then
 
         if ! "${reformat}" \
             in="${R1}" in2="${R2}" \
-            out="${R1_REFORMATTED}" out2="${R2_REFORMATTED}" \
+            out="${R1_REFORMATTED}" \
+            out2="${R2_REFORMATTED}" \
+            addslash=t \
             tossbrokenreads=t; then
-            log_error "reformat.sh reformat of R1/R2 failed"
+            log_error "reformat.sh failed for R1/R2"
             exit 1
         fi
-
-        log "Repairing paired-end FASTQ with repair.sh..."
-        R1_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_repaired-00.fastq"
-        R2_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_repaired-00.fastq"
-        SINGLETON_FILE="${OUTPUT_DIR}/${SAMPLE_NAME}_singletons_repaired-00.fastq"
-
-        if ! "${repair_sh}" \
-            in="${R1_REFORMATTED}" in2="${R2_REFORMATTED}" \
-            out="${R1_REPAIRED}" out2="${R2_REPAIRED}" \
-            outs="${SINGLETON_FILE}"; then
-            log_error "repair.sh failed"
-            exit 1
-        fi
-        R1="${R1_REPAIRED}"
-        R2="${R2_REPAIRED}"
+        R1="${R1_REFORMATTED}"
+        R2="${R2_REFORMATTED}"
     fi
+fi
+
+# Repair: runs only when --repair=t and paired-end mode
+if [[ "${REPAIR}" == "t" && "${SINGLE_END}" == "f" ]]; then
+    log "Repairing paired-end FASTQ with repair.sh..."
+    R1_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R1_repaired-00.fastq"
+    R2_REPAIRED="${OUTPUT_DIR}/${SAMPLE_NAME}_R2_repaired-00.fastq"
+    SINGLETON_FILE="${OUTPUT_DIR}/${SAMPLE_NAME}_singletons_repaired-00.fastq"
+
+    if ! "${repair_sh}" \
+        in="${R1}" in2="${R2}" \
+        out="${R1_REPAIRED}" out2="${R2_REPAIRED}" \
+        outs="${SINGLETON_FILE}"; then
+        log_error "repair.sh failed"
+        exit 1
+    fi
+    R1="${R1_REPAIRED}"
+    R2="${R2_REPAIRED}"
 fi
 
 ###############################################################################
@@ -679,9 +690,12 @@ if [[ "${CLEAN}" == "t" ]]; then
         [[ -n "${R2_REDU}" && -e "${R2_REDU}" ]] && rm -f "${R2_REDU}"
     fi
 
-    if [[ "${REPAIR}" == "t" ]]; then
+    if [[ "${REFORMAT}" == "t" || "${REPAIR}" == "t" ]]; then
         [[ -n "${R1_REFORMATTED}" && -e "${R1_REFORMATTED}" ]] && rm -f "${R1_REFORMATTED}"
         [[ -n "${R2_REFORMATTED}" && -e "${R2_REFORMATTED}" ]] && rm -f "${R2_REFORMATTED}"
+    fi
+
+    if [[ "${REPAIR}" == "t" ]]; then
         [[ -n "${R1_REPAIRED}" && -e "${R1_REPAIRED}" ]] && rm -f "${R1_REPAIRED}"
         [[ -n "${R2_REPAIRED}" && -e "${R2_REPAIRED}" ]] && rm -f "${R2_REPAIRED}"
         [[ -n "${SINGLETON_FILE}" && -e "${SINGLETON_FILE}" ]] && rm -f "${SINGLETON_FILE}"
