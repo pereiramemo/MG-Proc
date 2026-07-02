@@ -1,0 +1,14 @@
+# Nextflow runtime artifacts
+.nextflow/
+.nextflow.log*
+work/
+output_nf/
+*.pyc
+__pycache__/
+
+# Test outputs and large bundled sequencing data (kept local, not in git)
+tests/outputs/
+tests/data/
+
+# Editor settings
+.vscode/

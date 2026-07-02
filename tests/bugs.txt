@@ -1,0 +1,9 @@
+#	Severity	Location	Issue
+1	Bug	L154–159	Missing --reads required check
+2	Bug	L621	gensub not portable; unescaped . in regex
+3	Bug	L224–284	R2 decompression assumes same format as R1
+4	Reliability	conf.sh L185	wc -l | cut breaks with space-padded output
+5	Reliability	L619	Stats computed over all intermediates
+6	Minor	L182	PVALUE not bounded to (0,1)
+7	Minor	L74	SAMPLE_NAME accepts path-unsafe chars
+8	Minor	L460	Silent empty discard file for bbmerge

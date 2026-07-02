@@ -1,0 +1,12 @@
+name: mg-proc-1.2-quality-check
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - r-base>=4.3
+  - r-tidyverse=2.0.0
+  - r-optparse
+  - r-doparallel
+  - r-this.path
+  - bioconductor-shortread
+  - bioconductor-dada2=1.30.0
