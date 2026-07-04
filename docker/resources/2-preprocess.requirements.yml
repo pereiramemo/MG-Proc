@@ -8,4 +8,3 @@ dependencies:
   - seqtk=1.4
   - pear=0.9.6
   - pigz
-  - matplotlib-base

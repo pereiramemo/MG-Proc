@@ -147,8 +147,8 @@ MODULE_1_1_QUALITY_CHECK — fastp QC report:
   --disable_adapter_trimming  STR  Disable adapter trimming in report, t/f (default: t)
 
 MODULE_1_2_QUALITY_CHECK — comparative QC plots:
-  --qc_r1_pattern   STR   Regex to select R1 (or SE) files (default: _R1_001.fastq.gz)
-  --qc_r2_pattern   STR   Regex to select R2 files (default: _R2_001.fastq.gz)
+  (finds files via --reads_pattern / --se_reads_pattern from General)
+  --qc_sample_size  INT   Reads subsampled per file for QC (default: 10000)
 
 MODULE_2_PREPROCESS — preprocessing:
   --reformat        STR  Reformat FASTQ with reformat.sh, t/f (default: f)
@@ -162,7 +162,6 @@ MODULE_2_PREPROCESS — preprocessing:
   --min_length      INT  Minimum read length after trimming (default: 75)
   --min_qual        INT  Quality trim threshold (default: 20)
   --seed            INT  Random seed for subsampling (default: 123)
-  --plot            STR  Produce QC stats plot, t/f (default: f)
   --clean           STR  Remove intermediates, t/f (default: f)
   --compress        STR  Compress outputs with pigz, t/f (default: f)
 
@@ -240,7 +239,7 @@ Docker.
 | [SAMtools](http://www.htslib.org/) | SAM/BAM manipulation |
 | [Picard](https://broadinstitute.github.io/picard/) | PCR duplicate removal |
 | [R](https://www.r-project.org/) + [tidyverse](https://www.tidyverse.org/) / [ShortRead](https://bioconductor.org/packages/ShortRead/) / [DADA2](https://benjjneb.github.io/dada2/) | Comparative QC plots and PhiX detection |
-| [Python 3](https://www.python.org/) + [matplotlib](https://matplotlib.org/) | Step scripts and preprocessing stats plot |
+| [Python 3](https://www.python.org/) | Step scripts and orchestration helpers |
 
 ## License
 

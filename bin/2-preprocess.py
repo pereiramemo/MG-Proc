@@ -25,6 +25,20 @@ SCRIPT_DESC = ("Preprocess raw Illumina metagenomic reads (paired-end or single-
                "optional reformat/repair, subsample, adapter trim, quality trim, "
                "PE merging, and FASTA conversion.")
 
+# Dev only section
+"""
+r1 = Path("/home/epereira/workspace/repos/tools/MG-Proc/tests/data/SRR12479690/SRR12479690_1.fastq.gz")               
+r2 = Path("/home/epereira/workspace/repos/tools/MG-Proc/tests/data/SRR12479690/SRR12479690_2.fastq.gz")
+output_dir = Path("/home/epereira/workspace/repos/tools/MG-Proc/tests/output/2-preprocess-out")
+merger = "pear"
+min_overlap = 10
+pvalue = 0.01
+output_pe = "t"
+output_merged = "t"
+single_end = "f"
+sample_name = "SRR12479690"
+"""
+
 ################################################################################
 # 2. Define functions
 ################################################################################
@@ -50,7 +64,6 @@ def parse_args():
     p.add_argument("--min_length",    type=int,   default=75,     help="Minimum read length after trimming [default=75]")
     p.add_argument("--min_qual",      type=int,   default=20,     help="Quality trim threshold [default=20]")
     p.add_argument("--nslots",        type=int,   default=12,     help="Threads [default=12]")
-    p.add_argument("--plot",          choices=["t", "f"], default="f", help="Produce QC plots [default=f]")
     p.add_argument("--sample_name",   default="metagenomex", help="Name prefix [default=metagenomex]")
     p.add_argument("--seed",          type=int,   default=123,    help="Random seed for subsampling [default=123]")
     p.add_argument("--subsample",     choices=["t", "f"], default="f", help="Subsample to 10k reads [default=f]")
@@ -106,34 +119,6 @@ def parse_order(basename):
     return int(m.group(1)) if m else 99
 
 
-def plot_stats(rows, out_png):
-    """Reimplement resources/plots.R: faceted barplot of read count and mean
-    length per intermediate FASTQ, ordered by pipeline step."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    files = sorted({(r["order"], r["file"]) for r in rows})
-    labels = [f for _, f in files]
-    num_seq = {r["file"]: r["value"] for r in rows if r["stat"] == "num_seq"}
-    mean_len = {r["file"]: r["value"] for r in rows if r["stat"] == "mean_length"}
-
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    for ax, data, title in (
-        (axes[0], [num_seq.get(f, 0) for f in labels], "Number of sequences"),
-        (axes[1], [mean_len.get(f, 0) for f in labels], "Mean length"),
-    ):
-        ax.bar(range(len(labels)), data, color="#333333", alpha=0.8)
-        ax.set_title(title, fontsize=10)
-        ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
-        ax.grid(axis="y", linestyle=":", alpha=0.4)
-    axes[1].set_xticks(range(len(labels)))
-    axes[1].set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
-    fig.tight_layout()
-    fig.savefig(out_png, dpi=200)
-    plt.close(fig)
-
-
 ################################################################################
 # 3. Define main function
 ################################################################################
@@ -153,6 +138,7 @@ def main():
     repair        = opts.repair == "t"
     subsample     = opts.subsample == "t"
     trim_adapters = opts.trim_adapters == "t"
+    adapters      = opts.adapters
     output_pe     = opts.output_pe == "t"
     output_merged = opts.output_merged == "t"
     merger        = opts.merger
@@ -163,7 +149,6 @@ def main():
     seed          = opts.seed
     clean         = opts.clean == "t"
     compress      = opts.compress == "t"
-    plot          = opts.plot == "t"
     nslots        = opts.nslots
     sample_name   = opts.sample_name
     overwrite     = opts.overwrite == "t"
@@ -217,8 +202,7 @@ def main():
 
     log_out   = logs_dir  / f"2-preprocess-{sample_name}.log"
     stats_out = stats_dir / "stats.tsv"
-    plot_out  = stats_dir / "stats_plots.png"
-    adapters  = find_adapters(opts.adapters)
+    adapters_found  = find_adapters(adapters)
 
     mode = "single-end" if single_end else "paired-end"
     inputs = [f"R1: {r1}"] + ([] if single_end else [f"R2: {r2}"])
@@ -344,13 +328,13 @@ def main():
         r1_at = out(f"{sample_name}_R1_at-01.fastq")
         if single_end:
             res = run_tool(["bbduk.sh", f"in={r1}", f"out={r1_at}", f"threads={nslots}",
-                            "ktrim=r", "k=23", "mink=11", "hdist=1", f"ref={adapters}"],
-                           "Trimming adapters (single-end)...")
+                            "ktrim=r", "k=23", "mink=11", "hdist=1", f"ref={adapters_found}"],
+                            "Trimming adapters (single-end)...")
         else:
             r2_at = out(f"{sample_name}_R2_at-01.fastq")
             res = run_tool(["bbduk.sh", f"in={r1}", f"in2={r2}", f"out={r1_at}", f"out2={r2_at}",
                             f"threads={nslots}", "ktrim=r", "k=23", "mink=11", "hdist=1",
-                            "tpe", "tbo", f"ref={adapters}"],
+                            "tpe", "tbo", f"ref={adapters_found}"],
                            "Trimming adapters (paired-end)...")
             r2 = r2_at
             intermediates.append(r2)
@@ -412,6 +396,8 @@ def main():
                            "Merging reads with BBMerge...")
             if res.returncode != 0:
                 fail("Merge with BBMerge failed")
+            if not os.path.getsize(r_assem):
+                fail("Failed merging: 0 merged reads with BBMerge")
             Path(r_discard).touch()
         intermediates += [r_assem, r1_unassem, r2_unassem, r_discard]
 
@@ -420,7 +406,7 @@ def main():
     ###########################################################################
 
     r_assem_qc = r1_unassem_qc = r2_unassem_qc = None
-    if not single_end and output_merged and r_assem and os.path.getsize(r_assem):
+    if not single_end and output_merged:
         r_assem_qc = out(f"{sample_name}_assembled_qc-03.fastq")
         res = run_tool(["bbduk.sh", f"in={r_assem}", f"out={r_assem_qc}",
                         f"minlength={min_length}", f"threads={nslots}", "qtrim=rl", f"trimq={min_qual}"],
@@ -460,7 +446,7 @@ def main():
                 fail("pigz compressing SE QC reads failed")
 
     ###########################################################################
-    # Step 11: Convert final reads to FASTA (seqtk seq -A replaces fq2fa.sh)
+    # Step 11: Convert final reads to FASTA
     ###########################################################################
 
     log("Converting to FASTA format...")
@@ -510,15 +496,7 @@ def main():
             fh.write(f"{r['sample']}\t{r['file']}\t{r['stat']}\t{r['value']}\t{r['order']}\n")
 
     ###########################################################################
-    # Step 13: Plot stats (optional)
-    ###########################################################################
-
-    if plot and rows:
-        log("Creating stats plot...")
-        plot_stats(rows, str(plot_out))
-
-    ###########################################################################
-    # Step 14: Clean intermediates (optional)
+    # Step 13: Clean intermediates (optional)
     ###########################################################################
 
     # Files that must survive cleanup: the emitted QC reads for downstream
@@ -541,7 +519,7 @@ def main():
                 os.remove(f)
 
     ###########################################################################
-    # Step 15: Compress final FASTA and rename to <sample>_workable
+    # Step 14: Compress final FASTA and rename to <sample>_workable
     ###########################################################################
 
     workable = None
@@ -560,12 +538,10 @@ def main():
             os.rename(workable_src, workable)
 
     ###########################################################################
-    # Step 16: Write log
+    # Step 15: Write log
     ###########################################################################
 
     outputs = [f"Statistics: {stats_out}"]
-    if plot and rows:
-        outputs.append(f"Stats plot: {plot_out}")
     if workable:
         outputs.append(f"Workable FASTA: {workable}")
     if not single_end and output_pe and r1_qc:
@@ -578,7 +554,6 @@ def main():
         SCRIPT_NAME, SCRIPT_DESC, sample_name, inputs, params,
         outputs=outputs, command=command, exit_status=0,
         tool_log="\n".join(tool_log)))
-
 
 ################################################################################
 # 4. Execute

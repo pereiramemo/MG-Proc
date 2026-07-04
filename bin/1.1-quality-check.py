@@ -19,6 +19,23 @@ from toolbox import log, log_warn, log_error, derive_sample_name, build_log
 SCRIPT_NAME = "1.1-quality-check.py"
 SCRIPT_DESC = "Run a fastp QC report on a single sample (report only; no filtering applied)."
 
+# Dev only section for testing in IDE (uncomment to test)
+""" 
+reads1 = "/home/epereira/workspace/repos/tools/MG-Proc/tests/data/SRR12479690/SRR12479690_1.fastq.gz"
+reads2 = "/home/epereira/workspace/repos/tools/MG-Proc/tests/data/SRR12479690/SRR12479690_2.fastq.gz"
+output_dir = Path("/home/epereira/workspace/repos/tools/MG-Proc/tests/output/1.1-quality-check-out")
+sample_name = "SRR12479690"
+single_end = False
+nslots = 12
+min_length = 50
+qualified_quality_phred = 20
+unqualified_percent_limit = 40
+disable_adapter_trimming = True
+html_report = True
+json_report = True
+overwrite = False
+"""
+
 ################################################################################
 # 2. Define functions
 ################################################################################
@@ -126,11 +143,9 @@ def main():
         "--unqualified_percent_limit", str(unqualified_percent_limit),
         "--json", str(json_out),
     ]
-    if not single_end:
-        cmd += ["-I", reads2]
+    cmd += ["-I", reads2] if not single_end else []
     cmd += ["--html", str(html_out)] if html_report else ["--html", "/dev/null"]
-    if disable_adapter_trimming:
-        cmd += ["--disable_adapter_trimming"]
+    cmd += ["--disable_adapter_trimming"] if disable_adapter_trimming else []
 
     mode = "single-end" if single_end else "paired-end"
     params = [

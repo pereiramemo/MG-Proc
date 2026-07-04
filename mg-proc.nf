@@ -34,8 +34,8 @@ workflow {
           --disable_adapter_trimming  STR  Disable adapter trimming in report, t/f (default: ${params.disable_adapter_trimming})
 
         MODULE_1_2_QUALITY_CHECK — comparative QC plots (always runs):
-          --qc_r1_pattern   STR   Regex to select R1 (or SE) files (default: ${params.qc_r1_pattern})
-          --qc_r2_pattern   STR   Regex to select R2 files (default: ${params.qc_r2_pattern})
+          (finds files via --reads_pattern / --se_reads_pattern from General)
+          --qc_sample_size  INT   Reads subsampled per file for QC (default: ${params.qc_sample_size})
 
         MODULE_2_PREPROCESS — preprocessing:
           --reformat        STR  Reformat FASTQ with reformat.sh, t/f (default: ${params.reformat})
@@ -49,7 +49,6 @@ workflow {
           --min_length      INT  Minimum read length after trimming (default: ${params.min_length})
           --min_qual        INT  Quality trim threshold (default: ${params.min_qual})
           --seed            INT  Random seed for subsampling (default: ${params.seed})
-          --plot            STR  Produce QC stats plot, t/f (default: ${params.plot})
           --clean           STR  Remove intermediates, t/f (default: ${params.clean})
           --compress        STR  Compress outputs with pigz, t/f (default: ${params.compress})
 
@@ -89,11 +88,12 @@ workflow {
     // MODULE_2_PREPROCESS: per-sample preprocessing
     preprocess = MODULE_2_PREPROCESS(reads_ch)
 
-    // MODULE_3_ASSEMBLY_AND_MAP: assemble + map the preprocessed QC-trimmed reads
-    if (!params.skip_assembly) {
-        qc_reads = preprocess.qc_reads.map { sample_name, r ->
-            tuple(sample_name, r instanceof List ? r : [r])
-        }
-        MODULE_3_ASSEMBLY_AND_MAP(qc_reads)
-    }
 }
+    // MODULE_3_ASSEMBLY_AND_MAP: assemble + map the preprocessed QC-trimmed reads
+//    if (!params.skip_assembly) {
+//        qc_reads = preprocess.qc_reads.map { sample_name, r ->
+//            tuple(sample_name, r instanceof List ? r : [r])
+//        }
+//        MODULE_3_ASSEMBLY_AND_MAP(qc_reads)
+//    }
+//}

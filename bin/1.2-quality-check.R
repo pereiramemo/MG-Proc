@@ -16,178 +16,267 @@ suppressMessages({
 # Import shared helpers from bin/toolbox.R (sibling module).
 source(file.path(dirname(this.path::this.path()), "toolbox.R"))
 
-SCRIPT_NAME <- "1.2-quality-check.R"
-SCRIPT_DESC <- "Comparative QC plots across all samples (mean quality vs read count, count histograms, PhiX contamination)." # nolintr
+script_name <- "1.2-quality-check.R"
+script_desc <- paste(
+  "Comparative QC plots across all samples (mean quality vs read count,",
+  "count histograms, PhiX contamination)."
+)
 
 ###############################################################################
 ### 2. Parse command line arguments
 ###############################################################################
 
 option_list <- list(
-  make_option(c("--input_dir"),  type = "character", default = NULL,
-              help = "Input directory with FASTQ files", metavar = "character"),
-  make_option(c("--output_dir"), type = "character", default = NULL,
-              help = "Output directory", metavar = "character"),
-  make_option(c("--nslots"),     type = "integer", default = 12,
-              help = "Number of threads to use [default=%default]", metavar = "integer"), 
-  make_option(c("--single_end"), type = "character", default = "f",
-              help = "Process single-end reads instead of paired-end [default=%default]", metavar = "character"),
-  make_option(c("--r1_pattern"), type = "character", default = "_R1_001.fastq.gz",
-              help = "Pattern for R1 FASTQ files, or single-end files when --single_end t [default=%default]", metavar = "character"),
-  make_option(c("--r2_pattern"), type = "character", default = "_R2_001.fastq.gz",
-              help = "Pattern for R2 FASTQ files (ignored when --single_end t) [default=%default]", metavar = "character"),
-  make_option(c("--overwrite"),  type = "character", default = "f",
-              help = "Overwrite previous output [default=%default]", metavar = "character")
+  make_option("--input_dir",
+    type = "character", default = NULL,
+    help = "Input directory with FASTQ files", metavar = "character"
+  ),
+  make_option("--output_dir",
+    type = "character", default = NULL,
+    help = "Output directory", metavar = "character"
+  ),
+  make_option("--nslots",
+    type = "integer", default = 12,
+    help = "Number of threads to use [default=%default]",
+    metavar = "integer"
+  ),
+  make_option("--sample_size",
+    type = "integer", default = 10000,
+    help = paste(
+      "Reads to subsample per file for quality and PhiX",
+      "estimation [default=%default]"
+    ),
+    metavar = "integer"
+  ),
+  make_option("--single_end",
+    type = "character", default = "f",
+    help = paste(
+      "Process single-end reads instead of paired-end",
+      "[default=%default]"
+    ),
+    metavar = "character"
+  ),
+  make_option("--reads_pattern",
+    type = "character", default = "*_{1,2}.fastq.gz",
+    help = paste(
+      "Paired-end glob; use a {1,2} token to mark the R1/R2 mates",
+      "(e.g. *_{1,2}.fastq.gz). Ignored when --single_end t [default=%default]"
+    ),
+    metavar = "character"
+  ),
+  make_option("--se_reads_pattern",
+    type = "character", default = "*.fastq.gz",
+    help = paste(
+      "Single-end glob matching the read files directly (e.g. *.fastq.gz).",
+      "Used only when --single_end t [default=%default]"
+    ),
+    metavar = "character"
+  ),
+  make_option("--overwrite",
+    type = "character", default = "f",
+    help = "Overwrite previous output [default=%default]",
+    metavar = "character"
+  )
 )
 
 opt <- parse_args(OptionParser(option_list = option_list))
 
 parse_bool <- function(x, flag) {
-  if (tolower(x) %in% c("t", "true"))  return(TRUE)
-  if (tolower(x) %in% c("f", "false")) return(FALSE)
+  if (tolower(x) %in% c("t", "true")) {
+    return(TRUE)
+  }
+  if (tolower(x) %in% c("f", "false")) {
+    return(FALSE)
+  }
   stop(paste0("--", flag, " must be t/f (got '", x, "')"), call. = FALSE)
 }
-SINGLE_END <- parse_bool(opt$single_end, "single_end")
-OVERWRITE  <- parse_bool(opt$overwrite,  "overwrite")
+single_end <- parse_bool(opt$single_end, "single_end")
+overwrite <- parse_bool(opt$overwrite, "overwrite")
 
 if (is.null(opt$input_dir) || is.null(opt$output_dir)) {
   log_error("--input_dir and --output_dir are required arguments.")
   quit(status = 1)
 }
 
-INPUT_DIR  <- opt$input_dir
-OUTPUT_DIR <- opt$output_dir
-NSLOTS     <- opt$nslots
-PATTERN_R1 <- opt$r1_pattern
-PATTERN_R2 <- opt$r2_pattern
+input_dir <- opt$input_dir
+output_dir <- opt$output_dir
+nslots <- opt$nslots
+sample_size <- opt$sample_size
+reads_pattern <- opt$reads_pattern
+se_reads_pattern <- opt$se_reads_pattern
+
+# Derive the read-identifying suffix(es) from the input glob(s). The leading "*"
+# is the sample name; the remainder identifies the read. In paired-end mode a
+# {1,2} token in --reads_pattern marks the R1/R2 mate position; in single-end
+# mode --se_reads_pattern matches the read files directly. The suffixes are used
+# as substring patterns by list.files()/qa() and to strip the sample name.
+if (single_end) {
+  pattern_r1 <- sub("^\\*", "", se_reads_pattern)
+  pattern_r2 <- NULL
+} else {
+  read_suffix <- sub("^\\*", "", reads_pattern)
+  if (!grepl("{1,2}", read_suffix, fixed = TRUE)) {
+    log_error(paste0(
+      "--reads_pattern must contain a {1,2} token in paired-end mode (got '",
+      reads_pattern, "')"
+    ))
+    quit(status = 1)
+  }
+  pattern_r1 <- sub("{1,2}", "1", read_suffix, fixed = TRUE)
+  pattern_r2 <- sub("{1,2}", "2", read_suffix, fixed = TRUE)
+}
+
+# Dev only section
+# input_dir <- "/home/epereira/workspace/repos/tools/MG-Proc/tests/data/SRR12479690/" # nolintr
+# output_dir <- "/home/epereira/workspace/repos/tools/MG-Proc/tests/output/1.2-quality-check-out" # nolintr
+# nslots <- 12
+# single_end <- FALSE
+# pattern_r1 <- "_1.fastq.gz"
+# pattern_r2 <- "_2.fastq.gz"
+# sample_size <- 10000
 
 ###############################################################################
 ### 3. Validate input directory and dependencies
 ###############################################################################
 
-if (!dir.exists(INPUT_DIR)) {
-  log_error(paste("Input directory does not exist:", INPUT_DIR))
+if (!dir.exists(input_dir)) {
+  log_error(paste("Input directory does not exist:", input_dir))
   quit(status = 1)
 }
 
-registerDoParallel(cores = NSLOTS)
+registerDoParallel(cores = nslots)
 
 ###############################################################################
 ### 4. Prepare output directories (output/, logs/, stats/)
 ###############################################################################
 
-if (dir.exists(OUTPUT_DIR)) {
-  if (!OVERWRITE) {
-    log_error(paste("Output directory already exists:", OUTPUT_DIR,
-                    "- use --overwrite t to overwrite"))
+if (dir.exists(output_dir)) {
+  if (!overwrite) {
+    log_error(paste(
+      "Output directory already exists:", output_dir,
+      "- use --overwrite t to overwrite"
+    ))
     quit(status = 1)
   }
-  log_warn(paste("Overwriting existing directory:", OUTPUT_DIR))
-  unlink(OUTPUT_DIR, recursive = TRUE)
+  log_warn(paste("Overwriting existing directory:", output_dir))
+  unlink(output_dir, recursive = TRUE)
 }
 
-RESULTS_DIR <- file.path(OUTPUT_DIR, "output")
-LOGS_DIR    <- file.path(OUTPUT_DIR, "logs")
-STATS_DIR   <- file.path(OUTPUT_DIR, "stats")
-for (d in c(RESULTS_DIR, LOGS_DIR, STATS_DIR)) {
+results_dir <- file.path(output_dir, "output")
+logs_dir <- file.path(output_dir, "logs")
+stats_dir <- file.path(output_dir, "stats")
+for (d in c(results_dir, logs_dir, stats_dir)) {
   dir.create(d, recursive = TRUE, showWarnings = FALSE)
 }
 
-LOG_OUT   <- file.path(LOGS_DIR,  "1.2-quality-check.log")
-STATS_OUT <- file.path(STATS_DIR, "1.2-quality-check-stats.tsv")
+log_out <- file.path(logs_dir, "1.2-quality-check.log")
+stats_out <- file.path(stats_dir, "1.2-quality-check-stats.tsv")
 
 ###############################################################################
 ### 5. Find input files
 ###############################################################################
 
-rawR1 <- sort(list.files(INPUT_DIR, pattern = PATTERN_R1, full.names = TRUE))
-if (length(rawR1) == 0) {
-  log_error(paste("No files found matching pattern:", PATTERN_R1))
+raw_r1 <- sort(list.files(input_dir, pattern = pattern_r1, full.names = TRUE))
+if (length(raw_r1) == 0) {
+  log_error(paste("No files found matching pattern:", pattern_r1))
   quit(status = 1)
 }
 
-if (!SINGLE_END) {
-  rawR2 <- sort(list.files(INPUT_DIR, pattern = PATTERN_R2, full.names = TRUE))
-  if (length(rawR2) == 0) {
-    log_error(paste("No R2 files found matching pattern:", PATTERN_R2))
+if (!single_end) {
+  raw_r2 <- sort(
+    list.files(input_dir, pattern = pattern_r2, full.names = TRUE)
+  )
+  if (length(raw_r2) == 0) {
+    log_error(paste("No R2 files found matching pattern:", pattern_r2))
     quit(status = 1)
   }
-  if (length(rawR1) != length(rawR2)) {
-    log_error(paste("Mismatch in number of files. R1:", length(rawR1),
-                    "R2:", length(rawR2)))
+  if (length(raw_r1) != length(raw_r2)) {
+    log_error(paste(
+      "Mismatch in number of files. R1:", length(raw_r1),
+      "R2:", length(raw_r2)
+    ))
     quit(status = 1)
   }
-  log_msg(paste("Found", length(rawR1), "R1 files and", length(rawR2), "R2 files"))
+  log_msg(paste(
+    "Found", length(raw_r1), "R1 files and", length(raw_r2), "R2 files"
+  ))
 } else {
-  log_msg(paste("Found", length(rawR1), "single-end files"))
-}
-
-extract_sample_name <- function(filepath, pattern) {
-  basename(filepath) %>% sub(pattern = pattern, replacement = "", fixed = FALSE)
+  log_msg(paste("Found", length(raw_r1), "single-end files"))
 }
 
 ###############################################################################
 ### 6. Per-sample read counts (R1 / single-end)
 ###############################################################################
 
-count_seqs <- function(p, pattern) {
-  n <- readFastq(p) %>% sread() %>% as.character() %>% length()
-  data.frame(sample = extract_sample_name(p, pattern), nseq = n)
-}
-
-seq_counts_df <- foreach(i = rawR1, .combine = rbind) %dopar% {
-  count_seqs(i, PATTERN_R1)
+seq_counts_df <- foreach(i = raw_r1, .combine = rbind) %dopar% {
+  count_seqs(i, pattern_r1)
 }
 
 ###############################################################################
 ### 7. R1 mean quality vs read count
 ###############################################################################
 
-x_r1 <- qa(dirPath = INPUT_DIR, pattern = PATTERN_R1, sample = TRUE, n = 5000)
-qa_means <- x_r1[["perCycle"]][["quality"]] %>%
-            group_by(lane) %>%
-            summarize(mean_q = sum(Score * Count) / sum(Count), .groups = "drop")
-qa_means$lane <- sapply(qa_means$lane, function(x) extract_sample_name(x, PATTERN_R1))
-qa_means2counts <- left_join(qa_means, seq_counts_df, by = c("lane" = "sample"))
+x_r1 <- qa(
+  dirPath = input_dir, pattern = pattern_r1,
+  sample = TRUE, n = sample_size
+)
+qa_means <- x_r1[["perCycle"]][["quality"]] |>
+  group_by(lane) |>
+  summarize(mean_q = sum(Score * Count) / sum(Count), .groups = "drop")
+qa_means$lane <- sapply(
+  qa_means$lane,
+  function(x) extract_sample_name(x, pattern_r1)
+)
+qa_means2counts <- left_join(qa_means, seq_counts_df,
+                             by = c("lane" = "sample"))
 
 text_size <- 2
 p_r1 <- ggplot(qa_means2counts, aes(x = mean_q, y = nseq)) +
-        geom_point() +
-        scale_y_log10() +
-        ylab("Read counts (log)") +
-        xlab("Mean quality score (R1)") +
-        geom_text(aes(label = as.character(lane)), hjust = 0.5, vjust = -1, size = text_size)
+  geom_point() +
+  scale_y_log10() +
+  ylab("Read counts (log)") +
+  xlab("Mean quality score (R1)") +
+  geom_text(aes(label = as.character(lane)),
+    hjust = 0.5, vjust = -1, size = text_size
+  )
 
-ggsave(p_r1, filename = file.path(RESULTS_DIR, "r1_mean_q_vs_nseq.png"),
-       device = "png", width = 5, height = 4, dpi = 300)
-
-# R1 mean quality kept for the stats table
-r1_mean_q <- qa_means %>% rename(sample = lane, mean_q_r1 = mean_q)
+ggsave(p_r1,
+  filename = file.path(results_dir, "r1_mean_q_vs_nseq.png"),
+  device = "png", width = 5, height = 4, dpi = 300
+)
 
 ###############################################################################
 ### 8. R2 mean quality vs read count (paired-end only)
 ###############################################################################
 
-r2_mean_q <- NULL
-if (!SINGLE_END) {
-  x_r2 <- qa(dirPath = INPUT_DIR, pattern = PATTERN_R2, sample = TRUE, n = 5000)
-  qa_means_r2 <- x_r2[["perCycle"]][["quality"]] %>%
-                 group_by(lane) %>%
-                 summarize(mean_q = sum(Score * Count) / sum(Count), .groups = "drop")
-  qa_means_r2$lane <- sapply(qa_means_r2$lane, function(x) extract_sample_name(x, PATTERN_R2))
-  qa_means2counts_r2 <- left_join(qa_means_r2, seq_counts_df, by = c("lane" = "sample"))
+if (!single_end) {
+  x_r2 <- qa(
+    dirPath = input_dir, pattern = pattern_r2,
+    sample = TRUE, n = sample_size
+  )
+  qa_means_r2 <- x_r2[["perCycle"]][["quality"]] |>
+    group_by(lane) |>
+    summarize(mean_q = sum(Score * Count) / sum(Count), .groups = "drop")
+  qa_means_r2$lane <- sapply(
+    qa_means_r2$lane,
+    function(x) extract_sample_name(x, pattern_r2)
+  )
+  qa_means2counts_r2 <- left_join(qa_means_r2, seq_counts_df,
+                                  by = c("lane" = "sample"))
 
   p_r2 <- ggplot(qa_means2counts_r2, aes(x = mean_q, y = nseq)) +
-          geom_point() +
-          scale_y_log10() +
-          ylab("Read counts (log)") +
-          xlab("Mean quality score (R2)") +
-          geom_text(aes(label = as.character(lane)), hjust = 0.5, vjust = -1, size = text_size)
+    geom_point() +
+    scale_y_log10() +
+    ylab("Read counts (log)") +
+    xlab("Mean quality score (R2)") +
+    geom_text(aes(label = as.character(lane)),
+      hjust = 0.5, vjust = -1, size = text_size
+    )
 
-  ggsave(p_r2, filename = file.path(RESULTS_DIR, "r2_mean_q_vs_nseq.png"),
-         device = "png", width = 5, height = 4, dpi = 300)
-
-  r2_mean_q <- qa_means_r2 %>% rename(sample = lane, mean_q_r2 = mean_q)
+  ggsave(p_r2,
+    filename = file.path(results_dir, "r2_mean_q_vs_nseq.png"),
+    device = "png", width = 5, height = 4, dpi = 300
+  )
 }
 
 ###############################################################################
@@ -195,88 +284,129 @@ if (!SINGLE_END) {
 ###############################################################################
 
 samples_hist_p <- ggplot(qa_means2counts, aes(nseq)) +
-                  geom_histogram(bins = 40) + ylab("Num of samples")
+  geom_histogram(bins = 40) +
+  ylab("Num of samples")
 samples_hist_log_p <- ggplot(qa_means2counts, aes(log(nseq))) +
-                      geom_histogram(bins = 40) + ylab("Num of samples")
+  geom_histogram(bins = 40) +
+  ylab("Num of samples")
 
-ggsave(samples_hist_p, filename = file.path(RESULTS_DIR, "samples_hist.png"),
-       device = "png", width = 5, height = 4, dpi = 300)
-ggsave(samples_hist_log_p, filename = file.path(RESULTS_DIR, "samples_hist_log.png"),
-       device = "png", width = 5, height = 4, dpi = 300)
+ggsave(samples_hist_p,
+  filename = file.path(results_dir, "samples_hist.png"),
+  device = "png", width = 5, height = 4, dpi = 300
+)
+ggsave(samples_hist_log_p,
+  filename = file.path(results_dir, "samples_hist_log.png"),
+  device = "png", width = 5, height = 4, dpi = 300
+)
 
 ###############################################################################
 ### 10. PhiX contamination estimate
 ###############################################################################
 
-count_phix_seqs <- function(p) {
-  fastq <- readFastq(p) %>% sread() %>% as.character()
-  fastq_nphix <- isPhiX(seqs = fastq, wordSize = 16, minMatches = 2)
-  data.frame(file = p, n = length(fastq), nphix = sum(fastq_nphix))
+phix_counts_df <- foreach(i = raw_r1, .combine = rbind) %dopar% {
+  count_phix_seqs(i, n_sample = sample_size, seed = 123)
 }
 
-phix_counts_df <- foreach(i = rawR1, .combine = rbind) %dopar% {
-  count_phix_seqs(i)
-}
-
-X <- data.frame(
-  sample = sapply(phix_counts_df$file, function(x) extract_sample_name(x, PATTERN_R1)),
-  perc   = 100 * phix_counts_df$nphix / phix_counts_df$n,
-  nphix  = phix_counts_df$nphix
+phix_df <- data.frame(
+  sample = sapply(
+    phix_counts_df$file,
+    function(x) extract_sample_name(x, pattern_r1)
+  ),
+  perc = 100 * phix_counts_df$nphix / phix_counts_df$n,
+  nphix = phix_counts_df$nphix
 )
 
-X_plot <- X
-undet <- grep(pattern = "Undetermined", X_plot$sample)
-if (length(undet) > 0) X_plot <- X_plot[-undet, ]
-X_plot$color <- ifelse(X_plot$perc > 0.005, "indianred", "gray50")
+phix_plot <- phix_df
+undet <- grep(pattern = "Undetermined", phix_plot$sample)
+if (length(undet) > 0) {
+  phix_plot <- phix_plot[-undet, ]
+}
+phix_plot$color <- ifelse(phix_plot$perc > 0.005, "indianred", "gray50")
 
-perc_phix_barplot <- ggplot(X_plot, aes(x = sample, y = perc, fill = color)) +
-                     geom_bar(stat = "identity") +
-                     theme_bw() +
-                     scale_fill_manual(values = c("gray50" = "gray50", "indianred" = "indianred"),
-                                       labels = c("gray50" = "Phix <= 0.005%", "indianred" = "Phix > 0.005%"),
-                                       name = "") +
-                     theme(axis.text.x = element_text(size = 6, angle = 45, hjust = 1),
-                           legend.position = "top")
+perc_phix_barplot <- ggplot(
+  phix_plot,
+  aes(x = sample, y = perc, fill = color)
+) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  scale_fill_manual(
+    values = c("gray50" = "gray50", "indianred" = "indianred"),
+    labels = c("gray50" = "Phix <= 0.005%", "indianred" = "Phix > 0.005%"),
+    name = ""
+  ) +
+  theme(
+    axis.text.x = element_text(size = 6, angle = 45, hjust = 1),
+    legend.position = "top"
+  )
 
-ggsave(perc_phix_barplot, filename = file.path(RESULTS_DIR, "samples_perc_phix_barplot.png"),
-       device = "png", width = 10, height = 4, dpi = 300)
+ggsave(perc_phix_barplot,
+  filename = file.path(results_dir, "samples_perc_phix_barplot.png"),
+  device = "png", width = 10, height = 4, dpi = 300
+)
 
 ###############################################################################
 ### 11. Stats table (samples as rows, statistics as columns)
 ###############################################################################
 
-stats_tbl <- seq_counts_df %>%
-             left_join(r1_mean_q, by = "sample")
-if (!SINGLE_END && !is.null(r2_mean_q)) {
-  stats_tbl <- stats_tbl %>% left_join(r2_mean_q, by = "sample")
+stats_tbl <- qa_means2counts |>
+  dplyr::rename(sample = lane, mean_q_r1 = mean_q)
+if (!single_end) {
+  stats_tbl <- stats_tbl |>
+    left_join(
+      qa_means2counts_r2 |>
+        dplyr::rename(sample = lane, mean_q_r2 = mean_q) |>
+        select(sample, mean_q_r2),
+      by = "sample"
+    )
 }
-stats_tbl <- stats_tbl %>%
-             left_join(X %>% transmute(sample = sample, phix_pct = perc), by = "sample")
+phix_summary <- phix_df |> transmute(sample = sample, phix_pct = perc)
+stats_tbl <- stats_tbl |>
+  left_join(phix_summary, by = "sample") |>
+  dplyr::select(sample, nseq, mean_q_r1, dplyr::any_of("mean_q_r2"), phix_pct)
 
-write_tsv(stats_tbl, STATS_OUT)
+write_tsv(stats_tbl, stats_out)
 
 ###############################################################################
 ### 12. Log and summary
 ###############################################################################
 
-log_msg(paste("Processed", length(rawR1), "samples"))
+log_msg(paste("Processed", length(raw_r1), "samples"))
 log_msg("\033[0;32m1.2-quality-check.R completed successfully\033[0m")
 
-generated <- c("r1_mean_q_vs_nseq.png",
-               if (!SINGLE_END) "r2_mean_q_vs_nseq.png",
-               "samples_hist.png", "samples_hist_log.png",
-               "samples_perc_phix_barplot.png")
+generated <- c(
+  "r1_mean_q_vs_nseq.png",
+  if (!single_end) "r2_mean_q_vs_nseq.png",
+  "samples_hist.png", "samples_hist_log.png",
+  "samples_perc_phix_barplot.png"
+)
+
+inputs <- c(
+  paste("Input directory:", input_dir),
+  paste("Reads pattern:", if (single_end) se_reads_pattern else reads_pattern),
+  paste("R1 pattern (derived):", pattern_r1),
+  if (!single_end) paste("R2 pattern (derived):", pattern_r2)
+)
+
+params <- c(
+  paste("Threads:", nslots),
+  paste("Read type:", if (single_end) "single-end" else "paired-end"),
+  paste("Sample size:", sample_size)
+)
+
+outputs <- c(
+  file.path(results_dir, generated),
+  paste("Statistics:", stats_out)
+)
+command <- paste(
+  c(script_name, commandArgs(trailingOnly = TRUE)),
+  collapse = " "
+)
 
 log_lines <- build_log(
-  SCRIPT_NAME, SCRIPT_DESC, sample_name = "all samples",
-  inputs  = c(paste("Input directory:", INPUT_DIR),
-              paste("R1 pattern:", PATTERN_R1),
-              if (!SINGLE_END) paste("R2 pattern:", PATTERN_R2)),
-  params  = c(paste("Threads:", NSLOTS),
-              paste("Read type:", if (SINGLE_END) "single-end" else "paired-end")),
-  outputs = c(file.path(RESULTS_DIR, generated), paste("Statistics:", STATS_OUT)),
-  command = paste(c(SCRIPT_NAME, commandArgs(trailingOnly = TRUE)), collapse = " "),
-  exit_status = 0,
+  script_name, script_desc,
+  sample_name = "all samples",
+  inputs = inputs, params = params, outputs = outputs,
+  command = command, exit_status = 0,
   tool_log = paste(capture.output(sessionInfo()), collapse = "\n")
 )
-writeLines(log_lines, LOG_OUT)
+writeLines(log_lines, log_out)

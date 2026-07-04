@@ -22,12 +22,13 @@ process MODULE_1_2_QUALITY_CHECK {
     script:
     """
     1.2-quality-check.R \
-        --input_dir   . \
-        --output_dir  1.2-quality-check-out \
-        --single_end  ${params.single_end ? 't' : 'f'} \
-        --r1_pattern  ${params.qc_r1_pattern} \
-        --r2_pattern  ${params.qc_r2_pattern} \
-        --nslots      ${task.cpus} \
-        --overwrite   t
+        --input_dir        . \
+        --output_dir       1.2-quality-check-out \
+        --single_end       ${params.single_end ? 't' : 'f'} \
+        --reads_pattern    '${params.reads_pattern}' \
+        --se_reads_pattern '${params.se_reads_pattern}' \
+        --sample_size      ${params.qc_sample_size} \
+        --nslots           ${task.cpus} \
+        --overwrite        t
     """
 }

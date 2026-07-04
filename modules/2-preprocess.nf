@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // MODULE 2: preprocessing pipeline
 // Input:  per-sample reads (R1[, R2])
-// Output: workable FASTA + stats/plots/log; emits QC-trimmed reads for assembly
+// Output: workable FASTA + stats/log; emits QC-trimmed reads for assembly
 // ─────────────────────────────────────────────────────────────────────────────
 
 process MODULE_2_PREPROCESS {
@@ -44,7 +44,6 @@ process MODULE_2_PREPROCESS {
         --min_length    ${params.min_length} \
         --min_qual      ${params.min_qual} \
         --seed          ${params.seed} \
-        --plot          ${params.plot} \
         --clean         ${params.clean} \
         --compress      ${params.compress} \
         --nslots        ${task.cpus} \

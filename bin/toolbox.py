@@ -123,10 +123,6 @@ def build_log(script_name, script_desc, sample_name, inputs, params,
 
 
 # ── Sequence statistics ──────────────────────────────────────────────────────
-# These replace the conf.sh helpers (count_fastq via `wc -l`, count_fasta via
-# `egrep -c`, compute_mean_length via emboss `infoseq`). Working in Python keeps
-# the preprocessing image free of emboss and avoids the `wc -l | cut` parsing
-# bug and gawk-only `gensub` in the old stats block.
 
 def _magic(path):
     """Return the first two bytes of a file (for compression detection)."""
@@ -175,17 +171,13 @@ def mean_length(path, fmt="fastq"):
                     count += 1
         else:  # fasta
             seq_len = 0
-            started = False
             for line in fh:
                 if line.startswith(">"):
-                    if started:
-                        total += seq_len
-                        count += 1
+                    total += seq_len   # bank the previous record (0 at the first header)
                     seq_len = 0
-                    started = True
+                    count += 1         # one record per header
                 else:
                     seq_len += len(line.rstrip("\n"))
-            if started:
-                total += seq_len
-                count += 1
+            total += seq_len           # bank the final record
     return total / count if count else 0
+
