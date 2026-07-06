@@ -79,7 +79,7 @@ def _section(title, items):
     return [f"{title}:", "    None"]
 
 
-def build_log(script_name, script_desc, sample_name, inputs, params,
+def build_log(*, script_name, script_desc, sample_name, inputs, params,
               outputs, command, exit_status, tool_log=""):
     """Assemble the standardized log file following the project CLAUDE.md.
     The general-info block (script name, description, date, sample, inputs,

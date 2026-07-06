@@ -88,12 +88,11 @@ workflow {
     // MODULE_2_PREPROCESS: per-sample preprocessing
     preprocess = MODULE_2_PREPROCESS(reads_ch)
 
-}
     // MODULE_3_ASSEMBLY_AND_MAP: assemble + map the preprocessed QC-trimmed reads
-//    if (!params.skip_assembly) {
-//        qc_reads = preprocess.qc_reads.map { sample_name, r ->
-//            tuple(sample_name, r instanceof List ? r : [r])
-//        }
-//        MODULE_3_ASSEMBLY_AND_MAP(qc_reads)
-//    }
-//}
+    if (!params.skip_assembly) {
+        qc_reads = preprocess.qc_reads.map { sample_name, r ->
+            tuple(sample_name, r instanceof List ? r : [r])
+        }
+        MODULE_3_ASSEMBLY_AND_MAP(qc_reads)
+    }
+}

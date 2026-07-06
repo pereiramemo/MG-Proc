@@ -222,7 +222,11 @@ def main():
     def fail(msg):
         log_error(msg)
         log_out.write_text(build_log(
-            SCRIPT_NAME, SCRIPT_DESC, sample_name, inputs, params,
+            script_name=SCRIPT_NAME,
+            script_desc=SCRIPT_DESC,
+            sample_name=sample_name,
+            inputs=inputs,
+            params=params,
             outputs=["(failed before completion)"], command=command,
             exit_status=1, tool_log="\n".join(tool_log)))
         sys.exit(1)
@@ -551,7 +555,11 @@ def main():
 
     log("\033[0;32m2-preprocess.py completed successfully\033[0m")
     log_out.write_text(build_log(
-        SCRIPT_NAME, SCRIPT_DESC, sample_name, inputs, params,
+        script_name=SCRIPT_NAME,
+        script_desc=SCRIPT_DESC,
+        sample_name=sample_name,
+        inputs=inputs,
+        params=params,
         outputs=outputs, command=command, exit_status=0,
         tool_log="\n".join(tool_log)))
 

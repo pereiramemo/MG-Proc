@@ -171,7 +171,9 @@ def main():
     if result.returncode != 0:
         log_error(f"fastp failed for sample {sample_name}")
         log_out.write_text(build_log(
-            SCRIPT_NAME, SCRIPT_DESC, sample_name,
+            script_name=SCRIPT_NAME,
+            script_desc=SCRIPT_DESC,
+            sample_name=sample_name,
             inputs=inputs, params=params,
             outputs=[f"HTML report: {html_out}", f"JSON report: {json_out}"],
             command=" ".join([SCRIPT_NAME] + sys.argv[1:]),
@@ -215,7 +217,9 @@ def main():
     log("\033[0;32m1.1-quality-check.py completed successfully\033[0m")
 
     log_out.write_text(build_log(
-        SCRIPT_NAME, SCRIPT_DESC, sample_name,
+        script_name=SCRIPT_NAME,
+        script_desc=SCRIPT_DESC,
+        sample_name=sample_name,
         inputs=inputs, params=params,
         outputs=[
             f"HTML report: {html_out}",

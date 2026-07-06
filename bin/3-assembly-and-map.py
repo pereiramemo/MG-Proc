@@ -146,7 +146,11 @@ def main():
 
     def write_log(exit_status, outputs):
         log_out.write_text(build_log(
-            SCRIPT_NAME, SCRIPT_DESC, sample_name, inputs, params,
+            script_name=SCRIPT_NAME,
+            script_desc=SCRIPT_DESC,
+            sample_name=sample_name,
+            inputs=inputs,
+            params=params,
             outputs=outputs, command=command, exit_status=exit_status,
             tool_log="\n".join(tool_log)))
 
