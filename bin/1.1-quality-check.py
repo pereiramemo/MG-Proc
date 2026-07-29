@@ -10,11 +10,12 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-# Import shared helpers from bin/toolbox.py (sibling module).
+# Import shared helpers from bin/utils.py (sibling module).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from toolbox import log, log_warn, log_error, derive_sample_name, build_log
+from utils import log, log_warn, log_error, derive_sample_name, build_log, decompress_or_link
 
 SCRIPT_NAME = "1.1-quality-check.py"
 SCRIPT_DESC = "Run a fastp QC report on a single sample (report only; no filtering applied)."
@@ -131,22 +132,6 @@ def main():
     # Step 3: Build and execute fastp command (report-only mode)
     ###########################################################################
 
-    cmd = [
-        "fastp",
-        "-i", reads1,
-        "-w", str(nslots),
-        "--disable_quality_filtering",
-        "--disable_length_filtering",
-        "--disable_trim_poly_g",
-        "--length_required", str(min_length),
-        "--qualified_quality_phred", str(qualified_quality_phred),
-        "--unqualified_percent_limit", str(unqualified_percent_limit),
-        "--json", str(json_out),
-    ]
-    cmd += ["-I", reads2] if not single_end else []
-    cmd += ["--html", str(html_out)] if html_report else ["--html", "/dev/null"]
-    cmd += ["--disable_adapter_trimming"] if disable_adapter_trimming else []
-
     mode = "single-end" if single_end else "paired-end"
     params = [
         f"Threads: {nslots}",
@@ -159,10 +144,37 @@ def main():
     ]
     inputs = [f"R1: {reads1}"] + ([] if single_end else [f"R2: {reads2}"])
 
-    log("Running fastp...")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True)
-    print(result.stdout, end="")
+    # fastp only auto-detects gzip; bzip2 (or any other) input must be
+    # decompressed first, or it silently misparses the raw bytes as FASTQ.
+    with tempfile.TemporaryDirectory(prefix=f"1.1-quality-check-{sample_name}-",
+                                     dir=str(output_dir)) as tmp_dir:
+        reads1_run = os.path.join(tmp_dir, "R1.fastq")
+        decompress_or_link(reads1, reads1_run)
+        reads2_run = None
+        if not single_end:
+            reads2_run = os.path.join(tmp_dir, "R2.fastq")
+            decompress_or_link(reads2, reads2_run)
+
+        cmd = [
+            "fastp",
+            "-i", reads1_run,
+            "-w", str(nslots),
+            "--disable_quality_filtering",
+            "--disable_length_filtering",
+            "--disable_trim_poly_g",
+            "--length_required", str(min_length),
+            "--qualified_quality_phred", str(qualified_quality_phred),
+            "--unqualified_percent_limit", str(unqualified_percent_limit),
+            "--json", str(json_out),
+        ]
+        cmd += ["-I", reads2_run] if not single_end else []
+        cmd += ["--html", str(html_out)] if html_report else ["--html", "/dev/null"]
+        cmd += ["--disable_adapter_trimming"] if disable_adapter_trimming else []
+
+        log("Running fastp...")
+        result = subprocess.run(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True)
+        print(result.stdout, end="")
 
     ###########################################################################
     # Step 4: Check fastp result

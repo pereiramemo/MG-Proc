@@ -13,8 +13,8 @@ suppressMessages({
   library(this.path)
 })
 
-# Import shared helpers from bin/toolbox.R (sibling module).
-source(file.path(dirname(this.path::this.path()), "toolbox.R"))
+# Import shared helpers from bin/utils.R (sibling module).
+source(file.path(dirname(this.path::this.path()), "utils.R"))
 
 script_name <- "1.2-quality-check.R"
 script_desc <- paste(
@@ -99,6 +99,8 @@ if (is.null(opt$input_dir) || is.null(opt$output_dir)) {
 }
 
 input_dir <- opt$input_dir
+orig_input_dir <- input_dir # kept for the log's "Input data" section; input_dir
+                            # itself is repointed to a decompressed staging dir below
 output_dir <- opt$output_dir
 nslots <- opt$nslots
 sample_size <- opt$sample_size
@@ -173,7 +175,7 @@ log_out <- file.path(logs_dir, "1.2-quality-check.log")
 stats_out <- file.path(stats_dir, "1.2-quality-check-stats.tsv")
 
 ###############################################################################
-### 5. Find input files
+### 5. Find and stage input files
 ###############################################################################
 
 raw_r1 <- sort(list.files(input_dir, pattern = pattern_r1, full.names = TRUE))
@@ -202,6 +204,36 @@ if (!single_end) {
   ))
 } else {
   log_msg(paste("Found", length(raw_r1), "single-end files"))
+}
+
+# ShortRead's qa()/countFastq()/FastqSampler() only understand gzip (or
+# plain), not bzip2, so stage a plain/decompressed copy of every matched file
+# and point the rest of the script at that staging dir instead of input_dir.
+# Compression suffixes are stripped from the (derived) patterns to match the
+# staged, decompressed filenames.
+strip_compression_ext <- function(x) sub("\\.(gz|bz2)$", "", x)
+
+staged_dir <- tempfile(pattern = "1.2-quality-check-", tmpdir = output_dir)
+dir.create(staged_dir, recursive = TRUE, showWarnings = FALSE)
+
+for (f in raw_r1) {
+  decompress_or_link(f, file.path(staged_dir, strip_compression_ext(basename(f))))
+}
+if (!single_end) {
+  for (f in raw_r2) {
+    decompress_or_link(f, file.path(staged_dir, strip_compression_ext(basename(f))))
+  }
+}
+
+orig_pattern_r1 <- pattern_r1
+orig_pattern_r2 <- pattern_r2
+pattern_r1 <- strip_compression_ext(pattern_r1)
+if (!single_end) pattern_r2 <- strip_compression_ext(pattern_r2)
+input_dir <- staged_dir
+
+raw_r1 <- sort(list.files(input_dir, pattern = pattern_r1, full.names = TRUE))
+if (!single_end) {
+  raw_r2 <- sort(list.files(input_dir, pattern = pattern_r2, full.names = TRUE))
 }
 
 ###############################################################################
@@ -366,6 +398,8 @@ stats_tbl <- stats_tbl |>
 
 write_tsv(stats_tbl, stats_out)
 
+unlink(staged_dir, recursive = TRUE)
+
 ###############################################################################
 ### 12. Log and summary
 ###############################################################################
@@ -381,10 +415,10 @@ generated <- c(
 )
 
 inputs <- c(
-  paste("Input directory:", input_dir),
+  paste("Input directory:", orig_input_dir),
   paste("Reads pattern:", if (single_end) se_reads_pattern else reads_pattern),
-  paste("R1 pattern (derived):", pattern_r1),
-  if (!single_end) paste("R2 pattern (derived):", pattern_r2)
+  paste("R1 pattern (derived):", orig_pattern_r1),
+  if (!single_end) paste("R2 pattern (derived):", orig_pattern_r2)
 )
 
 params <- c(

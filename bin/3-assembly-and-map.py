@@ -14,9 +14,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Import shared helpers from bin/toolbox.py (sibling module).
+# Import shared helpers from bin/utils.py (sibling module).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from toolbox import log, log_warn, log_error, derive_sample_name, build_log, count_fasta
+from utils import log, log_warn, log_error, derive_sample_name, build_log, count_fasta
 
 SCRIPT_NAME = "3-assembly-and-map.py"
 SCRIPT_DESC = ("De novo assembly (MEGAHIT) and read mapping (BWA-MEM + SAMtools) for a "

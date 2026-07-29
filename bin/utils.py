@@ -2,14 +2,14 @@
 
 Provides the standard logging helpers and the standardized log-file builder
 described in the project CLAUDE.md, plus sequence-statistic helpers (read
-counts and mean lengths) used by the preprocessing and assembly scripts.
-Because the bin/ scripts run standalone (invoked by name from PATH, e.g. under
-Nextflow), import this module by adding the script's own directory to sys.path
-first:
+counts and mean lengths) and compression-normalization helpers used by the
+quality-check, preprocessing, and assembly scripts. Because the bin/ scripts
+run standalone (invoked by name from PATH, e.g. under Nextflow), import this
+module by adding the script's own directory to sys.path first:
 
     import os, sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from toolbox import log, log_warn, log_error, derive_sample_name, build_log
+    from utils import log, log_warn, log_error, derive_sample_name, build_log
 
 The log/log_warn/log_error helpers print to the console and also accumulate
 ANSI-free messages that build_log() emits in the Info/Warnings/Errors sections
@@ -18,7 +18,9 @@ of the general-info block.
 
 import bz2
 import gzip
+import os
 import re
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -138,6 +140,25 @@ def open_maybe_compressed(path, mode="rt"):
     if sig == b"BZ":
         return bz2.open(path, mode)
     return open(path, mode)
+
+
+def decompress_or_link(src, dst):
+    """Normalize src to plain-text dst: decompress gzip/bzip2, or symlink dst
+    -> src when src is already plain. Needed before handing reads to tools
+    that only understand gzip or nothing at all (e.g. fastp doesn't read
+    bzip2). Returns the detected kind: "gzip", "bzip2", or "plain".
+    """
+    sig = _magic(src)
+    if sig == b"\x1f\x8b":
+        with gzip.open(src, "rb") as fi, open(dst, "wb") as fo:
+            shutil.copyfileobj(fi, fo)
+        return "gzip"
+    if sig == b"BZ":
+        with bz2.open(src, "rb") as fi, open(dst, "wb") as fo:
+            shutil.copyfileobj(fi, fo)
+        return "bzip2"
+    os.symlink(os.path.realpath(src), dst)
+    return "plain"
 
 
 def count_fastq(path):

@@ -5,9 +5,7 @@
 ################################################################################
 
 import argparse
-import bz2
 import glob
-import gzip
 import os
 import re
 import shutil
@@ -15,10 +13,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Import shared helpers from bin/toolbox.py (sibling module).
+# Import shared helpers from bin/utils.py (sibling module).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from toolbox import (log, log_warn, log_error, derive_sample_name, build_log,
-                     count_fastq, mean_length)
+from utils import (log, log_warn, log_error, derive_sample_name, build_log,
+                   count_fastq, mean_length, decompress_or_link)
 
 SCRIPT_NAME = "2-preprocess.py"
 SCRIPT_DESC = ("Preprocess raw Illumina metagenomic reads (paired-end or single-end): "
@@ -91,26 +89,6 @@ def find_adapters(explicit):
         if os.path.isfile(c):
             return c
     return "adapters"  # BBDuk keyword shorthand for the packaged adapters
-
-
-def magic(path):
-    with open(path, "rb") as fh:
-        return fh.read(2)
-
-
-def decompress_or_link(src, dst):
-    """Decompress gzip/bzip2 src into dst, or symlink dst -> src when plain."""
-    sig = magic(src)
-    if sig == b"\x1f\x8b":
-        with gzip.open(src, "rb") as fi, open(dst, "wb") as fo:
-            shutil.copyfileobj(fi, fo)
-        return "gzip"
-    if sig == b"BZ":
-        with bz2.open(src, "rb") as fi, open(dst, "wb") as fo:
-            shutil.copyfileobj(fi, fo)
-        return "bzip2"
-    os.symlink(os.path.realpath(src), dst)
-    return "plain"
 
 
 def parse_order(basename):
