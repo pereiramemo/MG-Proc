@@ -40,7 +40,7 @@ run_test() {
 ###############################################################################
 
 run_test "pycompile" python -m py_compile \
-    "${BIN}/toolbox.py" "${BIN}/1.1-quality-check.py" \
+    "${BIN}/utils.py" "${BIN}/1.1-quality-check.py" \
     "${BIN}/2-preprocess.py" "${BIN}/3-assembly-and-map.py"
 
 ###############################################################################
