@@ -23,8 +23,8 @@ assembly + mapping of the preprocessed reads. Assembly can be skipped with
 │   ├── 1.2-quality-check.R                 # Comparative QC plots (all samples)
 │   ├── 2-preprocess.py                     # Preprocessing pipeline (per sample)
 │   ├── 3-assembly-and-map.py               # Assembly + mapping (per sample)
-│   ├── toolbox.py                          # Shared Python helpers
-│   └── toolbox.R                           # Shared R helpers
+│   ├── utils.py                            # Shared Python helpers
+│   └── utils.R                             # Shared R helpers
 ├── modules/                                # Nextflow process definitions (*.nf)
 ├── docker/                                 # Per-module Dockerfiles + build script
 │   ├── *.Dockerfile
