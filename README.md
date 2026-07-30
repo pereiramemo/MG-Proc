@@ -87,33 +87,32 @@ sample; the quality-trimmed reads it emits (paired-end `*_qc-02.fastq`, single-e
 `*_se_qc-02.fastq`; compressed to `.gz` when `--compress true`) feed
 `MODULE_3_ASSEMBLY_AND_MAP`, which is skipped when `--skip_assembly true`.
 
-Paired-end (default) and single-end reads are both supported: with `--single_end true`
-the reads channel is built with `channel.fromPath` (using `--se_reads_pattern`) instead
-of `channel.fromFilePairs`, and every module runs in single-end mode.
+Paired-end and single-end reads are both supported, and the reads channel is
+always built from the `--input_tsv` samplesheet: a row's `reads2` is empty for
+a single-end sample. There's no separate `--single_end` flag — `mg-proc.nf`
+infers it once from the sheet (which must be all paired-end or all
+single-end) and every module runs accordingly.
 
 ## Run
 
 ```bash
-# Paired-end run on the bundled test data (reads_pattern matches the SRA _1/_2 names)
+# Paired-end run on the bundled test data
 nextflow run mg-proc.nf \
-    --input_dir tests/data/SRR12479690 \
-    --reads_pattern '*_{1,2}.fastq.gz' \
+    --input_tsv tests/data/samplesheet_pe.tsv \
     --subsample t
 
-# Single-end run
+# Single-end run (samplesheet_se.tsv leaves reads2 empty)
 nextflow run mg-proc.nf \
-    --single_end true \
-    --input_dir tests/data/SRR4831661 \
-    --se_reads_pattern '*.fastq' \
+    --input_tsv tests/data/samplesheet_se.tsv \
     --reformat t --subsample t
 
 # QC + preprocess only (no assembly)
 nextflow run mg-proc.nf --skip_assembly true
 
-# On your own data
+# On your own data: write a TSV with sample_name, reads1, reads2 columns
+# (leave reads2 empty for single-end samples), then:
 nextflow run mg-proc.nf \
-    --input_dir     /path/to/fastq \
-    --reads_pattern '*_R{1,2}_001.fastq.gz' \
+    --input_tsv     /path/to/samplesheet.tsv \
     --output_dir    /path/to/results \
     --trim_adapters t \
     --nslots        16
@@ -145,10 +144,8 @@ line (e.g. `--nslots 16`). The full list (output of `nextflow run mg-proc.nf --h
 
 ```text
 General:
-  --input_dir         DIR   Input directory with FASTQ files (default: ./tests/data/SRR12479690/)
-  --reads_pattern     STR   Paired-end glob for fromFilePairs (default: *_{1,2}.fastq.gz)
-  --se_reads_pattern  STR   Single-end glob when --single_end true (default: *.fastq.gz)
-  --single_end        BOOL  Process single-end reads (default: false)
+  --input_tsv         FILE  TSV samplesheet: sample_name, reads1, reads2
+                            (empty reads2 => single-end; default: ./tests/data/samplesheet_pe.tsv)
   --output_dir        DIR   Output directory (default: ./tests/output_nf)
   --nslots            INT   CPU threads per tool (default: 12)
   --maxForks          INT   Max parallel process instances (default: 3)
@@ -163,7 +160,6 @@ MODULE_1_1_QUALITY_CHECK — fastp QC report (always runs):
   --disable_adapter_trimming  STR  Disable adapter trimming in report, t/f (default: t)
 
 MODULE_1_2_QUALITY_CHECK — comparative QC plots (always runs):
-  (finds files via --reads_pattern / --se_reads_pattern from General)
   --qc_sample_size  INT   Reads subsampled per file for QC (default: 10000)
 
 MODULE_2_PREPROCESS — preprocessing:
@@ -171,6 +167,8 @@ MODULE_2_PREPROCESS — preprocessing:
   --repair          STR  Reformat + repair FASTQ (PE), t/f (default: f)
   --subsample       STR  Subsample to 10k reads, t/f (default: f)
   --trim_adapters   STR  Remove adapters with BBDuk, t/f (default: f)
+  --output_pe       STR  Output PE R1/R2 QC reads; only takes effect with
+                          --skip_assembly true, t/f (default: f)
   --output_merged   STR  Merge PE reads, t/f (default: t)
   --merger          STR  pear | bbmerge (default: pear)
   --min_overlap     INT  Minimum PE overlap for PEAR (default: 10)

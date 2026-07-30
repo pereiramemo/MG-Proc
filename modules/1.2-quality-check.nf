@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // MODULE 1.2: comparative quality-check plots (R / ShortRead / DADA2)
-// Input:  all samples' reads staged together (aggregate)
+// Input:  all samples' reads staged together (aggregate), plus the input_tsv
+//         samplesheet used to map staged files back to sample names
 // Output: comparative QC plots + stats + log (diagnostic)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,7 @@ process MODULE_1_2_QUALITY_CHECK {
 
     input:
     path reads
+    path samplesheet
 
     output:
     path "1.2-quality-check-out"
@@ -22,13 +24,11 @@ process MODULE_1_2_QUALITY_CHECK {
     script:
     """
     1.2-quality-check.R \
-        --input_dir        . \
-        --output_dir       1.2-quality-check-out \
-        --single_end       ${params.single_end ? 't' : 'f'} \
-        --reads_pattern    '${params.reads_pattern}' \
-        --se_reads_pattern '${params.se_reads_pattern}' \
-        --sample_size      ${params.qc_sample_size} \
-        --nslots           ${task.cpus} \
-        --overwrite        t
+        --input_dir   . \
+        --input_tsv   ${samplesheet} \
+        --output_dir  1.2-quality-check-out \
+        --sample_size ${params.qc_sample_size} \
+        --nslots      ${task.cpus} \
+        --overwrite   t
     """
 }

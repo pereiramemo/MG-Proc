@@ -29,7 +29,21 @@ script_desc <- paste(
 option_list <- list(
   make_option("--input_dir",
     type = "character", default = NULL,
-    help = "Input directory with FASTQ files", metavar = "character"
+    help = paste(
+      "Directory containing the FASTQ files listed in --input_tsv",
+      "(files are located by basename)"
+    ),
+    metavar = "character"
+  ),
+  make_option("--input_tsv",
+    type = "character", default = NULL,
+    help = paste(
+      "TSV samplesheet with columns sample_name, reads1, reads2",
+      "(tab-delimited). Only the basename of reads1/reads2 is used to locate",
+      "files under --input_dir. Leave reads2 empty for single-end samples;",
+      "a sheet must be either all paired-end or all single-end."
+    ),
+    metavar = "character"
   ),
   make_option("--output_dir",
     type = "character", default = NULL,
@@ -47,30 +61,6 @@ option_list <- list(
       "estimation [default=%default]"
     ),
     metavar = "integer"
-  ),
-  make_option("--single_end",
-    type = "character", default = "f",
-    help = paste(
-      "Process single-end reads instead of paired-end",
-      "[default=%default]"
-    ),
-    metavar = "character"
-  ),
-  make_option("--reads_pattern",
-    type = "character", default = "*_{1,2}.fastq.gz",
-    help = paste(
-      "Paired-end glob; use a {1,2} token to mark the R1/R2 mates",
-      "(e.g. *_{1,2}.fastq.gz). Ignored when --single_end t [default=%default]"
-    ),
-    metavar = "character"
-  ),
-  make_option("--se_reads_pattern",
-    type = "character", default = "*.fastq.gz",
-    help = paste(
-      "Single-end glob matching the read files directly (e.g. *.fastq.gz).",
-      "Used only when --single_end t [default=%default]"
-    ),
-    metavar = "character"
   ),
   make_option("--overwrite",
     type = "character", default = "f",
@@ -90,63 +80,70 @@ parse_bool <- function(x, flag) {
   }
   stop(paste0("--", flag, " must be t/f (got '", x, "')"), call. = FALSE)
 }
-single_end <- parse_bool(opt$single_end, "single_end")
 overwrite <- parse_bool(opt$overwrite, "overwrite")
 
-if (is.null(opt$input_dir) || is.null(opt$output_dir)) {
-  log_error("--input_dir and --output_dir are required arguments.")
+if (is.null(opt$input_dir) || is.null(opt$input_tsv) || is.null(opt$output_dir)) {
+  log_error("--input_dir, --input_tsv, and --output_dir are required arguments.")
   quit(status = 1)
 }
 
 input_dir <- opt$input_dir
 orig_input_dir <- input_dir # kept for the log's "Input data" section; input_dir
                             # itself is repointed to a decompressed staging dir below
+input_tsv <- opt$input_tsv
 output_dir <- opt$output_dir
 nslots <- opt$nslots
 sample_size <- opt$sample_size
-reads_pattern <- opt$reads_pattern
-se_reads_pattern <- opt$se_reads_pattern
-
-# Derive the read-identifying suffix(es) from the input glob(s). The leading "*"
-# is the sample name; the remainder identifies the read. In paired-end mode a
-# {1,2} token in --reads_pattern marks the R1/R2 mate position; in single-end
-# mode --se_reads_pattern matches the read files directly. The suffixes are used
-# as substring patterns by list.files()/qa() and to strip the sample name.
-if (single_end) {
-  pattern_r1 <- sub("^\\*", "", se_reads_pattern)
-  pattern_r2 <- NULL
-} else {
-  read_suffix <- sub("^\\*", "", reads_pattern)
-  if (!grepl("{1,2}", read_suffix, fixed = TRUE)) {
-    log_error(paste0(
-      "--reads_pattern must contain a {1,2} token in paired-end mode (got '",
-      reads_pattern, "')"
-    ))
-    quit(status = 1)
-  }
-  pattern_r1 <- sub("{1,2}", "1", read_suffix, fixed = TRUE)
-  pattern_r2 <- sub("{1,2}", "2", read_suffix, fixed = TRUE)
-}
 
 # Dev only section
 # input_dir <- "/home/epereira/workspace/repos/tools/MG-Proc/tests/data_samo" # nolintr
 # output_dir <- "/home/epereira/workspace/repos/tools/MG-Proc/tests/output/1.2-quality-check-out" # nolintr
+# input_tsv <- "/home/epereira/workspace/repos/tools/MG-Proc/tests/data_samo/samplesheet.tsv" # nolintr
 # nslots <- 12
-# single_end <- FALSE
-# pattern_r1 <- "_1.fastq.gz"
-# pattern_r2 <- "_2.fastq.gz"
-# reads_pattern <- "*_{1,2}.fastq.gz"
-# reads_pattern <- "*_R{1,2}_*.fastq*"
 # sample_size <- 10000
 
 ###############################################################################
-### 3. Validate input directory and dependencies
+### 3. Validate input directory, samplesheet, and dependencies
 ###############################################################################
 
 if (!dir.exists(input_dir)) {
   log_error(paste("Input directory does not exist:", input_dir))
   quit(status = 1)
 }
+
+if (!file.exists(input_tsv)) {
+  log_error(paste("Input TSV does not exist:", input_tsv))
+  quit(status = 1)
+}
+
+samplesheet <- read_tsv(input_tsv, col_types = cols(.default = "c"), progress = FALSE)
+required_cols <- c("sample_name", "reads1", "reads2")
+if (!all(required_cols %in% names(samplesheet))) {
+  log_error(paste0(
+    "--input_tsv must have columns: ", paste(required_cols, collapse = ", "),
+    " (got: ", paste(names(samplesheet), collapse = ", "), ")"
+  ))
+  quit(status = 1)
+}
+if (nrow(samplesheet) == 0) {
+  log_error(paste("--input_tsv has no data rows:", input_tsv))
+  quit(status = 1)
+}
+if (anyDuplicated(samplesheet$sample_name)) {
+  log_error("--input_tsv has duplicate sample_name values.")
+  quit(status = 1)
+}
+
+samplesheet$reads2[is.na(samplesheet$reads2)] <- ""
+single_end_flags_list <- trimws(samplesheet$reads2) == ""
+if (length(unique(single_end_flags_list)) > 1) {
+  log_error(paste(
+    "--input_tsv mixes single-end and paired-end rows",
+    "(reads2 must be either always empty or always populated)."
+  ))
+  quit(status = 1)
+}
+single_end_flag <- single_end_flags_list[1]
 
 registerDoParallel(cores = nslots)
 
@@ -180,62 +177,67 @@ stats_out <- file.path(stats_dir, "1.2-quality-check-stats.tsv")
 ### 5. Find and stage input files
 ###############################################################################
 
-raw_r1 <- sort(list.files(input_dir, pattern = pattern_r1, full.names = TRUE))
-if (length(raw_r1) == 0) {
-  log_error(paste("No files found matching pattern:", pattern_r1))
-  quit(status = 1)
-}
-
-if (!single_end) {
-  raw_r2 <- sort(
-    list.files(input_dir, pattern = pattern_r2, full.names = TRUE)
-  )
-  if (length(raw_r2) == 0) {
-    log_error(paste("No R2 files found matching pattern:", pattern_r2))
-    quit(status = 1)
-  }
-  if (length(raw_r1) != length(raw_r2)) {
-    log_error(paste(
-      "Mismatch in number of files. R1:", length(raw_r1),
-      "R2:", length(raw_r2)
+locate_read_file <- function(path, sample_name, mate_label) {
+  f <- file.path(input_dir, basename(path))
+  if (!file.exists(f)) {
+    log_error(paste0(
+      "Sample '", sample_name, "': ", mate_label, " file not found: ",
+      basename(path), " (looked in ", input_dir, ")"
     ))
     quit(status = 1)
   }
-  log_msg(paste(
-    "Found", length(raw_r1), "R1 files and", length(raw_r2), "R2 files"
-  ))
-} else {
-  log_msg(paste("Found", length(raw_r1), "single-end files"))
+  f
 }
 
+samplesheet$reads1_path <- mapply(
+  locate_read_file, samplesheet$reads1, samplesheet$sample_name,
+  MoreArgs = list(mate_label = "reads1")
+)
+if (!single_end) {
+  samplesheet$reads2_path <- mapply(
+    locate_read_file, samplesheet$reads2, samplesheet$sample_name,
+    MoreArgs = list(mate_label = "reads2")
+  )
+}
+
+log_msg(if (single_end) {
+  paste("Found", nrow(samplesheet), "single-end files")
+} else {
+  paste("Found", nrow(samplesheet), "samples (R1 + R2 each)")
+})
+
 # ShortRead's qa()/countFastq()/FastqSampler() only understand gzip (or
-# plain), not bzip2, so stage a plain/decompressed copy of every matched file
-# and point the rest of the script at that staging dir instead of input_dir.
-# Compression suffixes are stripped from the (derived) patterns to match the
-# staged, decompressed filenames.
-strip_compression_ext <- function(x) sub("\\.(gz|bz2)$", "", x)
+# plain), not bzip2, so stage a plain/decompressed copy of every file, named
+# after its sample (<sample_name>_R1.fastq[/_R2.fastq]) rather than its
+# original filename. decompress_or_link() picks gzip/bzip2/plain by sniffing
+# the file's magic bytes, so any destination name works. Because the staged
+# names are our own convention rather than something derived from user input,
+# pattern_r1/pattern_r2 below are fixed constants - only qa()'s dirPath+pattern
+# API (see ShortRead docs) still needs a "pattern" at all.
+pattern_r1 <- "_R1\\.fastq$"
+pattern_r2 <- "_R2\\.fastq$"
 
 staged_dir <- tempfile(pattern = "1.2-quality-check-", tmpdir = output_dir)
 dir.create(staged_dir, recursive = TRUE, showWarnings = FALSE)
 
-for (f in raw_r1) {
-  decompress_or_link(f, file.path(staged_dir, strip_compression_ext(basename(f))))
-}
-if (!single_end) {
-  for (f in raw_r2) {
-    decompress_or_link(f, file.path(staged_dir, strip_compression_ext(basename(f))))
+for (i in seq_len(nrow(samplesheet))) {
+  decompress_or_link(
+    samplesheet$reads1_path[i],
+    file.path(staged_dir, paste0(samplesheet$sample_name[i], "_R1.fastq"))
+  )
+  if (!single_end) {
+    decompress_or_link(
+      samplesheet$reads2_path[i],
+      file.path(staged_dir, paste0(samplesheet$sample_name[i], "_R2.fastq"))
+    )
   }
 }
 
-orig_pattern_r1 <- pattern_r1
-orig_pattern_r2 <- pattern_r2
-pattern_r1 <- strip_compression_ext(pattern_r1)
-if (!single_end) pattern_r2 <- strip_compression_ext(pattern_r2)
 input_dir <- staged_dir
 
-raw_r1 <- sort(list.files(input_dir, pattern = pattern_r1, full.names = TRUE))
+raw_r1 <- sort(file.path(staged_dir, paste0(samplesheet$sample_name, "_R1.fastq")))
 if (!single_end) {
-  raw_r2 <- sort(list.files(input_dir, pattern = pattern_r2, full.names = TRUE))
+  raw_r2 <- sort(file.path(staged_dir, paste0(samplesheet$sample_name, "_R2.fastq")))
 }
 
 ###############################################################################
@@ -418,9 +420,8 @@ generated <- c(
 
 inputs <- c(
   paste("Input directory:", orig_input_dir),
-  paste("Reads pattern:", if (single_end) se_reads_pattern else reads_pattern),
-  paste("R1 pattern (derived):", orig_pattern_r1),
-  if (!single_end) paste("R2 pattern (derived):", orig_pattern_r2)
+  paste("Input samplesheet:", input_tsv),
+  paste("Samples:", paste(samplesheet$sample_name, collapse = ", "))
 )
 
 params <- c(

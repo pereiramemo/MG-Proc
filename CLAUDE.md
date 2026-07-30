@@ -21,10 +21,10 @@ process (`modules/*.nf`) that wraps a standalone script (`bin/*.py` or
 
 ```bash
 # Paired-end, on the bundled test data
-nextflow run mg-proc.nf --input_dir tests/data/SRR12479690 --reads_pattern '*_{1,2}.fastq.gz' --subsample t
+nextflow run mg-proc.nf --input_tsv tests/data/samplesheet_pe.tsv --subsample t
 
-# Single-end
-nextflow run mg-proc.nf --single_end true --input_dir tests/data/SRR4831661 --se_reads_pattern '*.fastq' --reformat t --subsample t
+# Single-end (reads2 is empty in the samplesheet, so this is inferred automatically)
+nextflow run mg-proc.nf --input_tsv tests/data/samplesheet_se.tsv --reformat t --subsample t
 
 # Skip assembly (QC + preprocess only)
 nextflow run mg-proc.nf --skip_assembly true
@@ -32,6 +32,14 @@ nextflow run mg-proc.nf --skip_assembly true
 # Full parameter listing
 nextflow run mg-proc.nf --help
 ```
+
+Input is a TSV samplesheet (`--input_tsv`, tab-delimited) with columns
+`sample_name`, `reads1`, `reads2`; leave `reads2` empty to mark a sample
+single-end (a sheet must be all paired-end or all single-end — mixed sheets
+are rejected). `mg-proc.nf` parses it once at startup to build the reads
+channel and infer paired-end vs. single-end for the whole run — there is no
+separate `--single_end` flag. See `tests/data/samplesheet_pe.tsv` /
+`samplesheet_se.tsv` for examples.
 
 Docker images are pulled automatically from `ghcr.io/pereiramemo/mg-proc/*`
 (`docker.enabled = true` in `nextflow.config`); no local build is needed unless
@@ -112,9 +120,10 @@ reads ─┬─> MODULE_1_1_QUALITY_CHECK      (per-sample fastp report, diagnos
 `MODULE_2_PREPROCESS` emits the reads that feed assembly via its `qc_reads`
 output channel — paired-end `*_R{1,2}_qc-02.fastq`, single-end
 `*_se_qc-02.fastq`. `MODULE_3_ASSEMBLY_AND_MAP` is skipped with
-`--skip_assembly true`. Single-end vs. paired-end is a pipeline-wide switch
-(`--single_end`); every module branches on it internally rather than having
-separate SE/PE modules.
+`--skip_assembly true`. Single-end vs. paired-end is a pipeline-wide switch inferred from
+`--input_tsv` (empty `reads2` column => single-end); `mg-proc.nf` computes it
+once and passes it as an explicit `single_end` process input to every module,
+which branches on it internally rather than having separate SE/PE modules.
 
 ### Shared helpers (`bin/utils.py` / `bin/utils.R`)
 
@@ -146,7 +155,8 @@ ordering is parsed back out (`parse_order`) when building `stats.tsv`.
 ### Test data vs. real runs
 
 `tests/data/` holds small bundled FASTQ sets (`SRR12479690` paired-end,
-`SRR4831661` single-end) used as pipeline defaults and by `tests/run_tests.sh`.
-`tests/data_samo/` and `tests/run_tests_samo.sh` are a separate, ad hoc local
-dataset/run script (hostname-specific absolute paths) — not part of the
-standard test suite.
+`SRR4831661` single-end) used as pipeline defaults and by `tests/run_tests.sh`,
+plus the `samplesheet_pe.tsv` / `samplesheet_se.tsv` samplesheets that point at
+them. `tests/data_samo/` and `tests/run_tests_samo.sh` are a separate, ad hoc
+local dataset/run script (hostname-specific absolute paths in
+`tests/data_samo/samplesheet.tsv`) — not part of the standard test suite.

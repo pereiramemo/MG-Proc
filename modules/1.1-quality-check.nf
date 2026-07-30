@@ -14,20 +14,24 @@ process MODULE_1_1_QUALITY_CHECK {
     tag "${sample_name}"
 
     input:
+    val single_end_flag
     tuple val(sample_name), path(reads)
 
     output:
     path "${sample_name}"
 
     script:
+    // Nextflow unwraps a single-element path list into a bare scalar (not a List),
+    // while 2+ elements become a BlankSeparatedList; normalize back to a List here.
     def rlist = reads instanceof List ? reads : [reads]
     def reads2 = rlist.size() > 1 ? "--reads2 ${rlist[1]}" : ""
+    
     """
     1.1-quality-check.py \
         --reads1                    ${rlist[0]} \
         ${reads2} \
         --sample_name               ${sample_name} \
-        --single_end                ${params.single_end ? 't' : 'f'} \
+        --single_end                ${single_end_flag ? 't' : 'f'} \
         --output_dir                ${sample_name} \
         --nslots                    ${task.cpus} \
         --min_length                ${params.qc_min_length} \
