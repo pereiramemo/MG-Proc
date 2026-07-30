@@ -62,7 +62,7 @@ def parse_args():
     p.add_argument("--min_length",    type=int,   default=75,     help="Minimum read length after trimming [default=75]")
     p.add_argument("--min_qual",      type=int,   default=20,     help="Quality trim threshold [default=20]")
     p.add_argument("--nslots",        type=int,   default=12,     help="Threads [default=12]")
-    p.add_argument("--sample_name",   default="metagenomex", help="Name prefix [default=metagenomex]")
+    p.add_argument("--sample_name",   default=None, help="Name prefix [default: derived from --reads filename]")
     p.add_argument("--seed",          type=int,   default=123,    help="Random seed for subsampling [default=123]")
     p.add_argument("--subsample",     choices=["t", "f"], default="f", help="Subsample to 10k reads [default=f]")
     p.add_argument("--trim_adapters", choices=["t", "f"], default="f", help="Remove adapters [default=f]")
@@ -92,8 +92,8 @@ def find_adapters(explicit):
 
 
 def parse_order(basename):
-    """Extract the pipeline-step number from a '...-NN.fastq' intermediate name."""
-    m = re.search(r'-(\d+)\.fastq$', basename)
+    """Extract the pipeline-step number from a '...-NN.fastq[.gz]' intermediate name."""
+    m = re.search(r'-(\d+)\.fastq(?:\.gz)?$', basename)
     return int(m.group(1)) if m else 99
 
 
@@ -129,13 +129,15 @@ def main():
     compress      = opts.compress == "t"
     nslots        = opts.nslots
     sample_name   = opts.sample_name
+    if sample_name is None:
+        sample_name = derive_sample_name(r1, strip_read_suffix=True)
     overwrite     = opts.overwrite == "t"
 
     tool_log = []          # accumulated third-party tool output for the log file
     intermediates = []     # paths of intermediate FASTQs (candidates for cleanup)
 
     ###########################################################################
-    # Step 2: Validate inputs, tools, and prepare output directories
+    # Step 2: Validate inputs and tools
     ###########################################################################
 
     if not os.path.isfile(r1):
@@ -164,6 +166,10 @@ def main():
         log_error("Missing required tools: " + ", ".join(missing))
         sys.exit(1)
 
+    ###########################################################################
+    # Step 3: Prepare output directories
+    ###########################################################################
+
     if output_dir.exists():
         if overwrite:
             log_warn(f"Overwriting existing directory: {output_dir}")
@@ -179,8 +185,12 @@ def main():
         d.mkdir(parents=True, exist_ok=True)
 
     log_out   = logs_dir  / f"2-preprocess-{sample_name}.log"
-    stats_out = stats_dir / "stats.tsv"
+    stats_out = stats_dir / f"2-preprocess-{sample_name}-stats.tsv"
     adapters_found  = find_adapters(adapters)
+
+    ###########################################################################
+    # Step 4: Log run parameters
+    ###########################################################################
 
     mode = "single-end" if single_end else "paired-end"
     inputs = [f"R1: {r1}"] + ([] if single_end else [f"R2: {r2}"])
@@ -196,6 +206,10 @@ def main():
         f"Clean: {'yes' if clean else 'no'}",
     ]
     command = " ".join([SCRIPT_NAME] + sys.argv[1:])
+
+    ###########################################################################
+    # Step 5: Define helper functions for subprocess execution and logging
+    ###########################################################################
 
     def fail(msg):
         log_error(msg)
@@ -230,7 +244,7 @@ def main():
         return str(results_dir / name)
 
     ###########################################################################
-    # Step 3: Detect compression and prepare inputs
+    # Step 6: Detect compression and prepare inputs
     ###########################################################################
 
     log("Checking input compression...")
@@ -246,7 +260,7 @@ def main():
         intermediates.append(r2)
 
     ###########################################################################
-    # Step 4: Reformat and/or repair FASTQ (optional)
+    # Step 7: Reformat and/or repair FASTQ (optional)
     ###########################################################################
 
     if reformat or repair:
@@ -282,7 +296,7 @@ def main():
         intermediates += [r1, r2, singletons]
 
     ###########################################################################
-    # Step 5: Subsample (optional)
+    # Step 8: Subsample (optional)
     ###########################################################################
 
     if subsample:
@@ -303,7 +317,7 @@ def main():
             intermediates.append(r2)
 
     ###########################################################################
-    # Step 6: Adapter trimming (optional)
+    # Step 9: Adapter trimming (optional)
     ###########################################################################
 
     if trim_adapters:
@@ -326,7 +340,7 @@ def main():
         intermediates.append(r1)
 
     ###########################################################################
-    # Step 7: Quality trim paired-end reads (optional, PE only)
+    # Step 10: Quality trim paired-end reads (optional, PE only)
     ###########################################################################
 
     r1_qc = r2_qc = None
@@ -346,7 +360,7 @@ def main():
                 fail("pigz compressing PE QC reads failed")
 
     ###########################################################################
-    # Step 8: Merge paired-end reads (optional, PE only)
+    # Step 11: Merge paired-end reads (optional, PE only)
     ###########################################################################
 
     r_assem = r1_unassem = r2_unassem = r_discard = None
@@ -384,7 +398,7 @@ def main():
         intermediates += [r_assem, r1_unassem, r2_unassem, r_discard]
 
     ###########################################################################
-    # Step 9: Quality trim merged and unmerged reads (PE only)
+    # Step 12: Quality trim merged and unmerged reads (PE only)
     ###########################################################################
 
     r_assem_qc = r1_unassem_qc = r2_unassem_qc = None
@@ -409,7 +423,7 @@ def main():
         intermediates += [r1_unassem_qc, r2_unassem_qc]
 
     ###########################################################################
-    # Step 10: Quality trim single-end reads (SE only)
+    # Step 13: Quality trim single-end reads (SE only)
     ###########################################################################
 
     se_qc = None
@@ -428,7 +442,7 @@ def main():
                 fail("pigz compressing SE QC reads failed")
 
     ###########################################################################
-    # Step 11: Convert final reads to FASTA
+    # Step 14: Convert final reads to FASTA
     ###########################################################################
 
     log("Converting to FASTA format...")
@@ -460,12 +474,33 @@ def main():
             fail("seqtk fq2fa unmerged R2 failed")
 
     ###########################################################################
-    # Step 12: Compute stats over every intermediate FASTQ
+    # Step 15: Remove the plain QC-trimmed reads once compressed
+    ###########################################################################
+
+    # pigz --keep leaves the plain file in place alongside the new .gz; keeping
+    # both around is redundant once compressed, and having both present with
+    # the same read names/counts is exactly what let a Nextflow output glob
+    # ambiguously match either one as "R1" or "R2" for the downstream assembly
+    # module. Deferred to here (rather than done inline right after each pigz
+    # call above) because Step 14's FASTA conversion still needs the plain
+    # se_qc; r1_qc/r2_qc aren't read again after Step 14, so removing them here
+    # too is just for a single, easy-to-audit cleanup point.
+    if compress:
+        if not single_end and output_pe:
+            if r1_qc and os.path.exists(r1_qc):
+                os.remove(r1_qc)
+            if r2_qc and os.path.exists(r2_qc):
+                os.remove(r2_qc)
+        if single_end and se_qc and os.path.exists(se_qc):
+            os.remove(se_qc)
+
+    ###########################################################################
+    # Step 16: Compute stats over every intermediate FASTQ
     ###########################################################################
 
     log("Computing statistics...")
     rows = []
-    for f in sorted(glob.glob(str(results_dir / "*.fastq"))):
+    for f in sorted(glob.glob(str(results_dir / "*.fastq")) + glob.glob(str(results_dir / "*.fastq.gz"))):
         base = os.path.basename(f)
         n = count_fastq(f)
         length = mean_length(f, fmt="fastq") if os.path.getsize(f) else 0
@@ -474,11 +509,12 @@ def main():
         rows.append({"sample": sample_name, "file": base, "stat": "mean_length", "value": length, "order": order})
 
     with open(stats_out, "w") as fh:
+        fh.write("sample\tfile\tstat\tvalue\torder\n")
         for r in rows:
             fh.write(f"{r['sample']}\t{r['file']}\t{r['stat']}\t{r['value']}\t{r['order']}\n")
 
     ###########################################################################
-    # Step 13: Clean intermediates (optional)
+    # Step 17: Clean intermediates (optional)
     ###########################################################################
 
     # Files that must survive cleanup: the emitted QC reads for downstream
@@ -501,7 +537,7 @@ def main():
                 os.remove(f)
 
     ###########################################################################
-    # Step 14: Compress final FASTA and rename to <sample>_workable
+    # Step 18: Compress final FASTA and rename to <sample>_workable
     ###########################################################################
 
     workable = None
@@ -520,16 +556,17 @@ def main():
             os.rename(workable_src, workable)
 
     ###########################################################################
-    # Step 15: Write log
+    # Step 19: Write log
     ###########################################################################
 
+    qc_suffix = ".gz" if compress else ""
     outputs = [f"Statistics: {stats_out}"]
     if workable:
         outputs.append(f"Workable FASTA: {workable}")
     if not single_end and output_pe and r1_qc:
-        outputs += [f"QC R1: {r1_qc}", f"QC R2: {r2_qc}"]
+        outputs += [f"QC R1: {r1_qc}{qc_suffix}", f"QC R2: {r2_qc}{qc_suffix}"]
     if single_end and se_qc:
-        outputs.append(f"QC single-end reads: {se_qc}")
+        outputs.append(f"QC single-end reads: {se_qc}{qc_suffix}")
 
     log("\033[0;32m2-preprocess.py completed successfully\033[0m")
     log_out.write_text(build_log(

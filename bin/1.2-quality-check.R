@@ -129,12 +129,14 @@ if (single_end) {
 }
 
 # Dev only section
-# input_dir <- "/home/epereira/workspace/repos/tools/MG-Proc/tests/data/SRR12479690/" # nolintr
+# input_dir <- "/home/epereira/workspace/repos/tools/MG-Proc/tests/data_samo" # nolintr
 # output_dir <- "/home/epereira/workspace/repos/tools/MG-Proc/tests/output/1.2-quality-check-out" # nolintr
 # nslots <- 12
 # single_end <- FALSE
 # pattern_r1 <- "_1.fastq.gz"
 # pattern_r2 <- "_2.fastq.gz"
+# reads_pattern <- "*_{1,2}.fastq.gz"
+# reads_pattern <- "*_R{1,2}_*.fastq*"
 # sample_size <- 10000
 
 ###############################################################################

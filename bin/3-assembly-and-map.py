@@ -31,7 +31,7 @@ def parse_args():
     p.add_argument("--reads1",            required=True, help="R1 (or single-end) reads, fastq/fa (required)")
     p.add_argument("--reads2",            default=None,  help="R2 reads (paired-end only)")
     p.add_argument("--single_end",        choices=["t", "f"], default="f", help="Process single-end reads [default=f]")
-    p.add_argument("--sample_name",       default="metagenomex", help="Sample name for output files [default=metagenomex]")
+    p.add_argument("--sample_name",       default=None, help="Sample name for output files [default: derived from --reads1 filename]")
     p.add_argument("--contigs",           default=None,  help="Pre-assembled contigs FASTA (takes precedence over --assem_dir)")
     p.add_argument("--assem_dir",         default=None,  help="Directory with previously computed assemblies")
     p.add_argument("--assem_preset",      default="meta-sensitive", help="MEGAHIT preset [default=meta-sensitive]")
@@ -80,6 +80,8 @@ def main():
     r2                = opts.reads2
     single_end        = opts.single_end == "t"
     sample_name       = opts.sample_name
+    if sample_name is None:
+        sample_name = derive_sample_name(r1, strip_read_suffix=True)
     contigs           = opts.contigs
     assem_dir         = opts.assem_dir
     assem_preset      = opts.assem_preset
@@ -169,7 +171,10 @@ def main():
 
     def run_shell(cmd_str, desc):
         log(desc)
-        res = subprocess.run(cmd_str, shell=True, executable="/bin/bash",
+        # pipefail: without it, a crash on the left side of a pipe (e.g. bwa
+        # mem) is masked whenever the right side (e.g. samtools view) still
+        # exits 0 on the partial stream it received.
+        res = subprocess.run("set -o pipefail; " + cmd_str, shell=True, executable="/bin/bash",
                              stderr=subprocess.PIPE, text=True)
         print(res.stderr, end="")
         tool_log.append("$ " + cmd_str + "\n" + res.stderr)

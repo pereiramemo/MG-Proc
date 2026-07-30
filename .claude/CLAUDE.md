@@ -11,24 +11,30 @@
 - Outputs follow the "Outputs" section below (`output/`, `logs/`, `stats/`). All the run summary goes into the log file's general-info block.
 
 ## Shared code
-- Python scripts import their shared helpers from `bin/toolbox.py` (the sibling
-  module, analogous to `bin/toolbox.R` for the R scripts). Do not redefine these
+- Python scripts import their shared helpers from `bin/utils.py` (the sibling
+  module, analogous to `bin/utils.R` for the R scripts). Do not redefine these
   per script. The module provides:
     - `log`, `log_warn`, `log_error` — console logging that also feeds the
-      Info/Warnings/Errors sections of the log file.
+      Info/Warnings/Errors sections of the log file. (R: `log_msg` instead of
+      `log`, to avoid shadowing base R's `log()`.)
     - `derive_sample_name(reads1, strip_read_suffix=False, sanitize=False)` —
       sample name from an R1 filename.
     - `build_log(script_name, script_desc, sample_name, inputs, params, outputs,
       command, exit_status, tool_log="")` — assembles the standardized log file
       (see "Log format").
+    - `decompress_or_link(src, dst)` — normalizes a read file to plain text at
+      `dst`: decompresses gzip/bzip2, or symlinks when `src` is already plain.
+      Use this before handing reads to a tool that doesn't understand bzip2
+      (e.g. fastp) or that shouldn't touch the original file. Mirrored in
+      `bin/utils.R` for the R scripts.
 - Import boilerplate (bin/ is on PATH at runtime, so resolve via `__file__`):
 
   ```python
   import os, sys
   sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-  from toolbox import log, log_warn, log_error, derive_sample_name, build_log
+  from utils import log, log_warn, log_error, derive_sample_name, build_log
   ```
-- The whole `bin/` directory is staged onto PATH by Nextflow, so `toolbox.py`
+- The whole `bin/` directory is staged onto PATH by Nextflow, so `utils.py`
   ships with every module automatically; the Dockerfiles do not copy it.
 
 ## Formats
@@ -37,7 +43,7 @@
 ## Outputs
 - Every tool should produce the following outputs within its output directory:
     - `output/`: where the script's main results are saved. Mandatory.
-    - `logs/`: where the log file is saved. It must contain the log produced by any third-party tools used in the script (if any), preceded at the top by the general info described in the "Log format" section below. This general info must not include any statistics about the data. For a single-sample analysis, the log should be named `<script_name>-<sample_name>.log`; for an analysis of several samples, it should be named `<script_name>.log`. Every script should provide `log`, `log_warn`, and `log_error` helper functions to record any relevant messages. Mandatory.
+    - `logs/`: where the log file is saved. It must contain the log produced by any third-party tools used in the script (if any), preceded at the top by the general info described in the "Log format" section below. This general info must not include any statistics about the data. For a single-sample analysis, the log should be named `<script_name>-<sample_name>.log`; for an analysis of several samples, it should be named `<script_name>.log`. Every script should provide `log` (`log_msg` in R), `log_warn`, and `log_error` helper functions to record any relevant messages. Mandatory.
     - `stats/`: where statistics about the script's data analysis are saved. For a single-sample analysis, the stats file should be named `<script_name>-<sample_name>-stats.tsv`; for an analysis of several samples, it should be named `<script_name>-stats.tsv`. Every stats file should be a TSV table with sample names as rows and statistics as columns. Optional.
 
 ## Log format

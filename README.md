@@ -129,11 +129,11 @@ line (e.g. `--nslots 16`). The full list (output of `nextflow run mg-proc.nf --h
 
 ```text
 General:
-  --input_dir         DIR   Input directory with FASTQ files (default: ./tests/data)
-  --reads_pattern     STR   Paired-end glob for fromFilePairs (default: *_R{1,2}_001.fastq.gz)
+  --input_dir         DIR   Input directory with FASTQ files (default: ./tests/data/SRR12479690/)
+  --reads_pattern     STR   Paired-end glob for fromFilePairs (default: *_{1,2}.fastq.gz)
   --se_reads_pattern  STR   Single-end glob when --single_end true (default: *.fastq.gz)
   --single_end        BOOL  Process single-end reads (default: false)
-  --output_dir        DIR   Output directory (default: ./output_nf)
+  --output_dir        DIR   Output directory (default: ./tests/output_nf)
   --nslots            INT   CPU threads per tool (default: 12)
   --maxForks          INT   Max parallel process instances (default: 3)
   --full_output       BOOL  Publish all module outputs (default: true)

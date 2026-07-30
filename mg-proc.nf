@@ -66,7 +66,7 @@ workflow {
     if (params.single_end) {
         reads_ch = channel.fromPath(
             "${params.input_dir}/${params.se_reads_pattern}", checkIfExists: true
-        ).map { f -> tuple(f.name.replaceAll(/\.(fastq|fq)(\.gz)?$/, ''), [f]) }
+        ).map { f -> tuple(f.name.replaceAll(/\.(fastq|fq)(\.gz|\.bz2)?$/, ''), [f]) }
     } else {
         reads_ch = channel.fromFilePairs(
             "${params.input_dir}/${params.reads_pattern}", checkIfExists: true
