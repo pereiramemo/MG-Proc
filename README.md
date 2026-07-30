@@ -84,8 +84,8 @@ reads ─┬─> MODULE_1_1_QUALITY_CHECK      (per sample, diagnostic)
 `MODULE_1_1_QUALITY_CHECK` (fastp) and `MODULE_1_2_QUALITY_CHECK` (comparative plots)
 are diagnostics that always run on the raw reads. `MODULE_2_PREPROCESS` runs per
 sample; the quality-trimmed reads it emits (paired-end `*_qc-02.fastq`, single-end
-`*_se_qc-02.fastq`) feed `MODULE_3_ASSEMBLY_AND_MAP`, which is skipped when
-`--skip_assembly true`.
+`*_se_qc-02.fastq`; compressed to `.gz` when `--compress true`) feed
+`MODULE_3_ASSEMBLY_AND_MAP`, which is skipped when `--skip_assembly true`.
 
 Paired-end (default) and single-end reads are both supported: with `--single_end true`
 the reads channel is built with `channel.fromPath` (using `--se_reads_pattern`) instead
@@ -122,6 +122,22 @@ nextflow run mg-proc.nf \
 nextflow run mg-proc.nf --help
 ```
 
+## Testing
+
+A script-level smoke test exercises the `bin/` scripts directly against the bundled
+test data, without containers — useful when iterating on a script without waiting on a
+full containerized run:
+
+```bash
+bash tests/run_tests.sh
+```
+
+It runs a `py_compile` syntax check, then single-end and paired-end preprocessing,
+assembly, and fastp QC report cases. It needs fastp, BBTools, seqtk, PEAR, pigz,
+MEGAHIT, BWA, SAMtools, and Picard on `PATH` (e.g. a conda/mamba environment) — see
+[Dependencies](#dependencies). For the containerized end-to-end pipeline, use
+`nextflow run mg-proc.nf` as shown above instead.
+
 ## Parameters
 
 All parameters have defaults in `nextflow.config` and can be overridden on the command
@@ -140,13 +156,13 @@ General:
   --skip_assembly     BOOL  Skip MODULE_3_ASSEMBLY_AND_MAP (default: false)
   --container_tag     STR   Tag of the ghcr.io/pereiramemo/mg-proc/* images (default: latest)
 
-MODULE_1_1_QUALITY_CHECK — fastp QC report:
+MODULE_1_1_QUALITY_CHECK — fastp QC report (always runs):
   --qc_min_length             INT  Minimum read length, reporting only (default: 50)
   --qualified_quality_phred   INT  Qualified base quality, reporting only (default: 20)
   --unqualified_percent_limit INT  Max unqualified base percent (default: 40)
   --disable_adapter_trimming  STR  Disable adapter trimming in report, t/f (default: t)
 
-MODULE_1_2_QUALITY_CHECK — comparative QC plots:
+MODULE_1_2_QUALITY_CHECK — comparative QC plots (always runs):
   (finds files via --reads_pattern / --se_reads_pattern from General)
   --qc_sample_size  INT   Reads subsampled per file for QC (default: 10000)
 
