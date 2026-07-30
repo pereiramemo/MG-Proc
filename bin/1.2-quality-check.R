@@ -193,7 +193,7 @@ samplesheet$reads1_path <- mapply(
   locate_read_file, samplesheet$reads1, samplesheet$sample_name,
   MoreArgs = list(mate_label = "reads1")
 )
-if (!single_end) {
+if (!single_end_flag) {
   samplesheet$reads2_path <- mapply(
     locate_read_file, samplesheet$reads2, samplesheet$sample_name,
     MoreArgs = list(mate_label = "reads2")
