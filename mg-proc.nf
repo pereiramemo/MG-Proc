@@ -16,10 +16,8 @@ workflow {
         Usage: nextflow run mg-proc.nf [options]
 
         General:
-          --input_dir         DIR   Input directory with FASTQ files (default: ${params.input_dir})
-          --reads_pattern     STR   Paired-end glob for fromFilePairs (default: ${params.reads_pattern})
-          --se_reads_pattern  STR   Single-end glob when --single_end true (default: ${params.se_reads_pattern})
-          --single_end        BOOL  Process single-end reads (default: ${params.single_end})
+          --input_tsv         FILE  TSV samplesheet: sample_name, reads1, reads2
+                                     (empty reads2 => single-end; default: ${params.input_tsv})
           --output_dir        DIR   Output directory (default: ${params.output_dir})
           --nslots            INT   CPU threads per tool (default: ${params.nslots})
           --maxForks          INT   Max parallel process instances (default: ${params.maxForks})
@@ -34,7 +32,6 @@ workflow {
           --disable_adapter_trimming  STR  Disable adapter trimming in report, t/f (default: ${params.disable_adapter_trimming})
 
         MODULE_1_2_QUALITY_CHECK — comparative QC plots (always runs):
-          (finds files via --reads_pattern / --se_reads_pattern from General)
           --qc_sample_size  INT   Reads subsampled per file for QC (default: ${params.qc_sample_size})
 
         MODULE_2_PREPROCESS — preprocessing:
@@ -42,6 +39,8 @@ workflow {
           --repair          STR  Reformat + repair FASTQ (PE), t/f (default: ${params.repair})
           --subsample       STR  Subsample to 10k reads, t/f (default: ${params.subsample})
           --trim_adapters   STR  Remove adapters with BBDuk, t/f (default: ${params.trim_adapters})
+          --output_pe       STR  Output PE R1/R2 QC reads; only takes effect with
+                                  --skip_assembly true, t/f (default: ${params.output_pe})
           --output_merged   STR  Merge PE reads, t/f (default: ${params.output_merged})
           --merger          STR  pear | bbmerge (default: ${params.merger})
           --min_overlap     INT  Minimum PE overlap for PEAR (default: ${params.min_overlap})
@@ -62,37 +61,50 @@ workflow {
         exit 0
     }
 
-    // Build the reads channel: paired-end (fromFilePairs) or single-end (fromPath).
-    if (params.single_end) {
-        reads_ch = channel.fromPath(
-            "${params.input_dir}/${params.se_reads_pattern}", checkIfExists: true
-        ).map { f -> tuple(f.name.replaceAll(/\.(fastq|fq)(\.gz|\.bz2)?$/, ''), [f]) }
-    } else {
-        reads_ch = channel.fromFilePairs(
-            "${params.input_dir}/${params.reads_pattern}", checkIfExists: true
-        )
+    // Build the reads channel from the TSV samplesheet (sample_name, reads1,
+    // reads2). An empty reads2 marks a single-end sample; the sheet must be
+    // all-PE or all-SE (mixed sheets are rejected below). Parsed eagerly
+    // (file().splitCsv(), not a channel) since single_end has to be known
+    // before any process is invoked.
+    samplesheet = file(params.input_tsv)
+    rows = samplesheet.splitCsv(header: true, sep: '\t')
+    if (rows.isEmpty()) {
+        error "input_tsv '${params.input_tsv}' has no data rows"
     }
 
-    log.info "Read type: ${params.single_end ? 'single-end' : 'paired-end'}"
+    single_end_flags_list = rows.collect { (it.reads2?.trim()) ? false : true }.unique()
+    if (single_end_flags_list.size() > 1) {
+        error "input_tsv mixes single-end and paired-end rows (reads2 must be either always empty or always populated)"
+    }
+    single_end_flag = single_end_flags_list[0]
+
+    reads_ch = channel.fromList(rows).map { row ->
+        // def scopes files to this closure call; without it Groovy would bind
+        // files in the enclosing script scope, shared/reused across every row.
+        def files = single_end_flag ? [file(row.reads1)] : [file(row.reads1), file(row.reads2)]
+        tuple(row.sample_name, files)
+    }
+
+    log.info "Read type: ${single_end_flag ? 'single-end' : 'paired-end'}"
     if (params.skip_assembly) {
         log.info "Assembly + mapping will be skipped"
     }
 
     // MODULE_1_1_QUALITY_CHECK: per-sample fastp report (diagnostic, always runs)
-    MODULE_1_1_QUALITY_CHECK(reads_ch)
+    MODULE_1_1_QUALITY_CHECK(single_end_flag, reads_ch)
 
     // MODULE_1_2_QUALITY_CHECK: comparative plots over all samples (diagnostic, always runs)
     all_reads = reads_ch.map { _sample_name, r -> r }.flatten().collect()
-    MODULE_1_2_QUALITY_CHECK(all_reads)
+    MODULE_1_2_QUALITY_CHECK(all_reads, samplesheet)
 
     // MODULE_2_PREPROCESS: per-sample preprocessing
-    preprocess = MODULE_2_PREPROCESS(reads_ch)
+    preprocess = MODULE_2_PREPROCESS(single_end_flag, reads_ch)
 
     // MODULE_3_ASSEMBLY_AND_MAP: assemble + map the preprocessed QC-trimmed reads
     if (!params.skip_assembly) {
         qc_reads = preprocess.qc_reads.map { sample_name, r ->
             tuple(sample_name, r instanceof List ? r : [r])
         }
-        MODULE_3_ASSEMBLY_AND_MAP(qc_reads)
+        MODULE_3_ASSEMBLY_AND_MAP(single_end_flag, qc_reads)
     }
 }
