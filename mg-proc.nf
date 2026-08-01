@@ -22,6 +22,7 @@ workflow {
           --nslots            INT   CPU threads per tool (default: ${params.nslots})
           --maxForks          INT   Max parallel process instances (default: ${params.maxForks})
           --full_output       BOOL  Publish all module outputs (default: ${params.full_output})
+          --publish_mode      STR   publishDir mode: copy | symlink | rellink | link | move (default: ${params.publish_mode})
           --skip_assembly     BOOL  Skip MODULE_3_ASSEMBLY_AND_MAP (default: ${params.skip_assembly})
           --container_tag     STR   Tag of the ghcr.io/pereiramemo/mg-proc/* images (default: ${params.container_tag})
 

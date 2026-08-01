@@ -8,7 +8,7 @@ process MODULE_3_ASSEMBLY_AND_MAP {
 
     container "ghcr.io/pereiramemo/mg-proc/3-assembly-and-map:${params.container_tag}"
     publishDir "${params.output_dir}/3-assembly-and-map-out",
-           mode: "copy",
+           mode: params.publish_mode,
            enabled: params.full_output.toBoolean()
 
     tag "${sample_name}"

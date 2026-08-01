@@ -121,22 +121,6 @@ nextflow run mg-proc.nf \
 nextflow run mg-proc.nf --help
 ```
 
-## Testing
-
-A script-level smoke test exercises the `bin/` scripts directly against the bundled
-test data, without containers — useful when iterating on a script without waiting on a
-full containerized run:
-
-```bash
-bash tests/run_tests.sh
-```
-
-It runs a `py_compile` syntax check, then single-end and paired-end preprocessing,
-assembly, and fastp QC report cases. It needs fastp, BBTools, seqtk, PEAR, pigz,
-MEGAHIT, BWA, SAMtools, and Picard on `PATH` (e.g. a conda/mamba environment) — see
-[Dependencies](#dependencies). For the containerized end-to-end pipeline, use
-`nextflow run mg-proc.nf` as shown above instead.
-
 ## Parameters
 
 All parameters have defaults in `nextflow.config` and can be overridden on the command
@@ -150,6 +134,7 @@ General:
   --nslots            INT   CPU threads per tool (default: 12)
   --maxForks          INT   Max parallel process instances (default: 3)
   --full_output       BOOL  Publish all module outputs (default: true)
+  --publish_mode      STR   publishDir mode: copy | symlink | rellink | link | move (default: copy)
   --skip_assembly     BOOL  Skip MODULE_3_ASSEMBLY_AND_MAP (default: false)
   --container_tag     STR   Tag of the ghcr.io/pereiramemo/mg-proc/* images (default: latest)
 

@@ -9,7 +9,7 @@ process MODULE_1_2_QUALITY_CHECK {
 
     container "ghcr.io/pereiramemo/mg-proc/1.2-quality-check:${params.container_tag}"
     publishDir "${params.output_dir}/",
-           mode: "copy",
+           mode: params.publish_mode,
            enabled: params.full_output.toBoolean()
 
     tag "all samples"

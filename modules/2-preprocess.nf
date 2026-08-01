@@ -8,7 +8,7 @@ process MODULE_2_PREPROCESS {
 
     container "ghcr.io/pereiramemo/mg-proc/2-preprocess:${params.container_tag}"
     publishDir "${params.output_dir}/2-preprocess-out",
-           mode: "copy",
+           mode: params.publish_mode,
            enabled: params.full_output.toBoolean()
 
     tag "${sample_name}"

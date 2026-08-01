@@ -8,7 +8,7 @@ process MODULE_1_1_QUALITY_CHECK {
 
     container "ghcr.io/pereiramemo/mg-proc/1.1-quality-check:${params.container_tag}"
     publishDir "${params.output_dir}/1.1-quality-check-out",
-           mode: "copy",
+           mode: params.publish_mode,
            enabled: params.full_output.toBoolean()
 
     tag "${sample_name}"
