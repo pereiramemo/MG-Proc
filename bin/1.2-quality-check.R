@@ -200,7 +200,7 @@ if (!single_end_flag) {
   )
 }
 
-log_msg(if (single_end) {
+log_msg(if (single_end_flag) {
   paste("Found", nrow(samplesheet), "single-end files")
 } else {
   paste("Found", nrow(samplesheet), "samples (R1 + R2 each)")
@@ -225,7 +225,7 @@ for (i in seq_len(nrow(samplesheet))) {
     samplesheet$reads1_path[i],
     file.path(staged_dir, paste0(samplesheet$sample_name[i], "_R1.fastq"))
   )
-  if (!single_end) {
+  if (!single_end_flag) {
     decompress_or_link(
       samplesheet$reads2_path[i],
       file.path(staged_dir, paste0(samplesheet$sample_name[i], "_R2.fastq"))
@@ -236,7 +236,7 @@ for (i in seq_len(nrow(samplesheet))) {
 input_dir <- staged_dir
 
 raw_r1 <- sort(file.path(staged_dir, paste0(samplesheet$sample_name, "_R1.fastq")))
-if (!single_end) {
+if (!single_end_flag) {
   raw_r2 <- sort(file.path(staged_dir, paste0(samplesheet$sample_name, "_R2.fastq")))
 }
 
@@ -285,7 +285,7 @@ ggsave(p_r1,
 ### 8. R2 mean quality vs read count (paired-end only)
 ###############################################################################
 
-if (!single_end) {
+if (!single_end_flag) {
   x_r2 <- qa(
     dirPath = input_dir, pattern = pattern_r2,
     sample = TRUE, n = sample_size
@@ -413,7 +413,7 @@ log_msg("\033[0;32m1.2-quality-check.R completed successfully\033[0m")
 
 generated <- c(
   "r1_mean_q_vs_nseq.png",
-  if (!single_end) "r2_mean_q_vs_nseq.png",
+  if (!single_end_flag) "r2_mean_q_vs_nseq.png",
   "samples_hist.png", "samples_hist_log.png",
   "samples_perc_phix_barplot.png"
 )
@@ -426,7 +426,7 @@ inputs <- c(
 
 params <- c(
   paste("Threads:", nslots),
-  paste("Read type:", if (single_end) "single-end" else "paired-end"),
+  paste("Read type:", if (single_end_flag) "single-end" else "paired-end"),
   paste("Sample size:", sample_size)
 )
 

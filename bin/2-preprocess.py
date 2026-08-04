@@ -352,7 +352,6 @@ def main():
                        "Quality trimming paired-end reads...")
         if res.returncode != 0:
             fail("bbduk quality trimming paired-end reads failed")
-        intermediates += [r1_qc, r2_qc]
         if compress:
             res = run_tool(["pigz", "--keep", "--processes", nslots, r1_qc, r2_qc],
                            "Compressing paired-end QC reads...")
@@ -401,6 +400,7 @@ def main():
     # Step 12: Quality trim merged and unmerged reads (PE only)
     ###########################################################################
 
+    # these files are considered intermediates, given that the final outputs are fasta files
     r_assem_qc = r1_unassem_qc = r2_unassem_qc = None
     if not single_end and output_merged:
         r_assem_qc = out(f"{sample_name}_assembled_qc-03.fastq")
@@ -409,7 +409,7 @@ def main():
                        "Quality trimming merged reads...")
         if res.returncode != 0:
             fail("bbduk quality trimming merged reads failed")
-        intermediates.append(r_assem_qc)
+        intermediates.append(r_assem_qc) 
 
     if not single_end and output_merged and r1_unassem and os.path.getsize(r1_unassem):
         r1_unassem_qc = out(f"{sample_name}_unassembled_R1_qc-03.fastq")
@@ -426,6 +426,9 @@ def main():
     # Step 13: Quality trim single-end reads (SE only)
     ###########################################################################
 
+    # fastq files as single-end reads are not removed, atlhoug there is a fasta 
+    # output, because the two files are outputs of the pipeline and might be needed 
+    # for downstream analysis  
     se_qc = None
     if single_end:
         se_qc = out(f"{sample_name}_se_qc-02.fastq")
@@ -434,7 +437,6 @@ def main():
                        "Quality trimming single-end reads...")
         if res.returncode != 0:
             fail("bbduk quality trimming single-end reads failed")
-        intermediates.append(se_qc)
         if compress:
             res = run_tool(["pigz", "--keep", "--processes", nslots, se_qc],
                            "Compressing single-end QC reads...")
@@ -446,23 +448,33 @@ def main():
     ###########################################################################
 
     log("Converting to FASTA format...")
-    workable_src = None  # uncompressed FASTA to become <sample>_workable.fasta
 
+    # convert to fasta single end reads
     if single_end and se_qc and os.path.getsize(se_qc):
         se_fa = out(f"{sample_name}_se_qc-02.fasta")
         res = run_redirect(["seqtk", "seq", "-A", se_qc], se_fa, "Converting single-end reads to FASTA...")
         if res.returncode != 0:
             fail("seqtk fq2fa single-end reads failed")
-        workable_src = se_fa
-
+        if compress:
+            res = run_tool(["pigz", "--keep", "--processes", nslots, se_fa],
+                           "Compressing single-end FASTA...")
+            if res.returncode != 0:
+                fail("pigz compressing SE FASTA failed")
+            
+    # convert to fasta paired-end reads
     r_assem_qc_fa = None
     if not single_end and output_merged and r_assem_qc and os.path.getsize(r_assem_qc):
         r_assem_qc_fa = out(f"{sample_name}_assembled_qc-03.fasta")
         res = run_redirect(["seqtk", "seq", "-A", r_assem_qc], r_assem_qc_fa, "Converting merged reads to FASTA...")
         if res.returncode != 0:
             fail("seqtk fq2fa merged reads failed")
-        workable_src = r_assem_qc_fa
+        if compress:
+            res = run_tool(["pigz", "--keep", "--processes", nslots, r_assem_qc_fa],
+                           "Compressing merged FASTA...")
+            if res.returncode != 0:
+                fail("pigz compressing merged FASTA failed")
 
+    # convert to fasta unmerged paired-end reads
     if not single_end and output_merged and r1_unassem_qc and os.path.getsize(r1_unassem_qc):
         r1_unassem_qc_fa = out(f"{sample_name}_unassembled_R1_qc-03.fasta")
         r2_unassem_qc_fa = out(f"{sample_name}_unassembled_R2_qc-03.fasta")
@@ -472,30 +484,14 @@ def main():
         res = run_redirect(["seqtk", "seq", "-A", r2_unassem_qc], r2_unassem_qc_fa, "Converting unmerged R2 to FASTA...")
         if res.returncode != 0:
             fail("seqtk fq2fa unmerged R2 failed")
+        if compress:
+            res = run_tool(["pigz", "--keep", "--processes", nslots, r1_unassem_qc_fa, r2_unassem_qc_fa],
+                           "Compressing unmerged FASTA...")
+            if res.returncode != 0:
+                fail("pigz compressing unmerged FASTA failed")
 
     ###########################################################################
-    # Step 15: Remove the plain QC-trimmed reads once compressed
-    ###########################################################################
-
-    # pigz --keep leaves the plain file in place alongside the new .gz; keeping
-    # both around is redundant once compressed, and having both present with
-    # the same read names/counts is exactly what let a Nextflow output glob
-    # ambiguously match either one as "R1" or "R2" for the downstream assembly
-    # module. Deferred to here (rather than done inline right after each pigz
-    # call above) because Step 14's FASTA conversion still needs the plain
-    # se_qc; r1_qc/r2_qc aren't read again after Step 14, so removing them here
-    # too is just for a single, easy-to-audit cleanup point.
-    if compress:
-        if not single_end and output_pe:
-            if r1_qc and os.path.exists(r1_qc):
-                os.remove(r1_qc)
-            if r2_qc and os.path.exists(r2_qc):
-                os.remove(r2_qc)
-        if single_end and se_qc and os.path.exists(se_qc):
-            os.remove(se_qc)
-
-    ###########################################################################
-    # Step 16: Compute stats over every intermediate FASTQ
+    # Step 15: Compute stats over every intermediate FASTQ
     ###########################################################################
 
     log("Computing statistics...")
@@ -514,6 +510,50 @@ def main():
             fh.write(f"{r['sample']}\t{r['file']}\t{r['stat']}\t{r['value']}\t{r['order']}\n")
 
     ###########################################################################
+    # Step 16: Remove the plain QC-trimmed reads once compressed
+    ###########################################################################
+
+    # pigz --keep leaves the plain file in place alongside the new .gz; keeping
+    # both around is redundant once compressed. 
+    # Deferred to here (rather than done inline right after each pigz
+    # call above) because Step 14's FASTA conversion still needs the plain se_qc; 
+    # r1_qc/r2_qc (when using output merged) aren't read again after Step 14, 
+    # so removing them here too is just for a single, easy-to-audit cleanup point.
+
+    if compress:
+        # remove uncompressed fastq and fasta single-end reads 
+        if single_end:
+            if se_qc and os.path.exists(se_qc):
+                os.remove(se_qc)
+            if se_fa and os.path.exists(se_fa):
+                os.remove(se_fa)
+
+        # remove uncompressed fastq and fasta merged paired-reads
+        if not single_end and output_merged:
+            if r_assem_qc and os.path.exists(r_assem_qc):
+                os.remove(r_assem_qc)
+            if r_assem_qc_fa and os.path.exists(r_assem_qc_fa):
+                os.remove(r_assem_qc_fa)
+
+        # remove uncompressed fastq and fasta unmerged reads
+        if not single_end and output_merged:
+            if r1_unassem_qc and os.path.exists(r1_unassem_qc):
+                os.remove(r1_unassem_qc)
+            if r1_unassem_qc_fa and os.path.exists(r1_unassem_qc_fa):
+                os.remove(r1_unassem_qc_fa)
+            if r2_unassem_qc and os.path.exists(r2_unassem_qc):
+                os.remove(r2_unassem_qc)
+            if r2_unassem_qc_fa and os.path.exists(r2_unassem_qc_fa):
+                os.remove(r2_unassem_qc_fa)
+
+        # remove uncompressed paired reads
+        if not single_end and output_pe:
+            if r1_qc and os.path.exists(r1_qc):
+                os.remove(r1_qc)
+            if r2_qc and os.path.exists(r2_qc):
+                os.remove(r2_qc)
+
+    ###########################################################################
     # Step 17: Clean intermediates (optional)
     ###########################################################################
 
@@ -522,51 +562,27 @@ def main():
     # that becomes <sample>_workable.
     if clean:
         log("Cleaning intermediate files...")
-        keep = set()
-        if single_end and se_qc:
-            keep.add(os.path.realpath(se_qc))
-            keep.add(os.path.realpath(se_qc + ".gz"))
-        if not single_end and output_pe and r1_qc:
-            keep.add(os.path.realpath(r1_qc)); keep.add(os.path.realpath(r1_qc + ".gz"))
-            keep.add(os.path.realpath(r2_qc)); keep.add(os.path.realpath(r2_qc + ".gz"))
-        if workable_src:
-            keep.add(os.path.realpath(workable_src))
-            keep.add(os.path.realpath(workable_src + ".gz"))
         for f in intermediates:
-            if f and os.path.realpath(f) not in keep and os.path.exists(f):
+            if f and os.path.realpath(f):
                 os.remove(f)
 
     ###########################################################################
-    # Step 18: Compress final FASTA and rename to <sample>_workable
+    # Step 18: Write log
     ###########################################################################
 
-    workable = None
-    if workable_src and os.path.exists(workable_src):
-        if compress:
-            res = run_tool(["pigz", "--keep", "--processes", nslots, workable_src],
-                           "Compressing final FASTA...")
-            if res.returncode != 0:
-                fail("pigz compressing final FASTA failed")
-            workable = out(f"{sample_name}_workable.fasta.gz")
-            os.rename(workable_src + ".gz", workable)
-            if os.path.exists(workable_src):
-                os.remove(workable_src)
-        else:
-            workable = out(f"{sample_name}_workable.fasta")
-            os.rename(workable_src, workable)
-
-    ###########################################################################
-    # Step 19: Write log
-    ###########################################################################
-
-    qc_suffix = ".gz" if compress else ""
+    gz_suffix = ".gz" if compress else ""
     outputs = [f"Statistics: {stats_out}"]
-    if workable:
-        outputs.append(f"Workable FASTA: {workable}")
+    if  output_merged and r_assem_qc_fa:
+        outputs.append(f"Merged FASTA: {r_assem_qc_fa}{gz_suffix}")
+    if  output_merged and r1_unassem_qc_fa:
+        outputs.append(f"Unmerged FASTA R1: {r1_unassem_qc_fa}{gz_suffix}")
+        outputs.append(f"Unmerged FASTA R2: {r2_unassem_qc_fa}{gz_suffix}")
     if not single_end and output_pe and r1_qc:
-        outputs += [f"QC R1: {r1_qc}{qc_suffix}", f"QC R2: {r2_qc}{qc_suffix}"]
+        outputs.append(f"QC R1 FASTQ: {r1_qc}{gz_suffix}")
+        outputs.append(f"QC R2 FASTQ: {r2_qc}{gz_suffix}")
     if single_end and se_qc:
-        outputs.append(f"QC single-end reads: {se_qc}{qc_suffix}")
+        outputs.append(f"QC single-end reads FASTQ: {se_qc}{gz_suffix}")
+        outputs.append(f"QC single-end reads FASTA: {se_fa}{gz_suffix}")
 
     log("\033[0;32m2-preprocess.py completed successfully\033[0m")
     log_out.write_text(build_log(
