@@ -30,7 +30,7 @@ assembly + mapping of the preprocessed reads. Assembly can be skipped with
 │   ├── *.Dockerfile
 │   ├── dockerbuild_commands.sh
 │   └── resources/*.requirements.yml
-└── tests/                                  # Bundled test data + smoke test
+└── tests/                                  # Test fixtures + smoke test
 ```
 
 ## Installation
@@ -96,26 +96,16 @@ single-end) and every module runs accordingly.
 ## Run
 
 ```bash
-# Paired-end run on the bundled test data
-nextflow run mg-proc.nf \
-    --input_tsv tests/data/samplesheet_pe.tsv \
-    --subsample t
-
-# Single-end run (samplesheet_se.tsv leaves reads2 empty)
-nextflow run mg-proc.nf \
-    --input_tsv tests/data/samplesheet_se.tsv \
-    --reformat t --subsample t
-
-# QC + preprocess only (no assembly)
-nextflow run mg-proc.nf --skip_assembly true
-
-# On your own data: write a TSV with sample_name, reads1, reads2 columns
-# (leave reads2 empty for single-end samples), then:
+# Write a TSV with sample_name, reads1, reads2 columns (leave reads2 empty
+# for single-end samples), then:
 nextflow run mg-proc.nf \
     --input_tsv     /path/to/samplesheet.tsv \
     --output_dir    /path/to/results \
     --trim_adapters t \
     --nslots        16
+
+# QC + preprocess only (no assembly)
+nextflow run mg-proc.nf --input_tsv /path/to/samplesheet.tsv --skip_assembly true
 
 # Full parameter listing
 nextflow run mg-proc.nf --help
@@ -129,7 +119,7 @@ line (e.g. `--nslots 16`). The full list (output of `nextflow run mg-proc.nf --h
 ```text
 General:
   --input_tsv         FILE  TSV samplesheet: sample_name, reads1, reads2
-                            (empty reads2 => single-end; default: ./tests/data/samplesheet_pe.tsv)
+                            (empty reads2 => single-end)
   --output_dir        DIR   Output directory (default: ./tests/output_nf)
   --nslots            INT   CPU threads per tool (default: 12)
   --maxForks          INT   Max parallel process instances (default: 3)

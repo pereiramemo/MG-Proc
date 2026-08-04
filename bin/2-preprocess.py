@@ -450,6 +450,7 @@ def main():
     log("Converting to FASTA format...")
 
     # convert to fasta single end reads
+    se_fa = None
     if single_end and se_qc and os.path.getsize(se_qc):
         se_fa = out(f"{sample_name}_se_qc-02.fasta")
         res = run_redirect(["seqtk", "seq", "-A", se_qc], se_fa, "Converting single-end reads to FASTA...")
@@ -475,6 +476,8 @@ def main():
                 fail("pigz compressing merged FASTA failed")
 
     # convert to fasta unmerged paired-end reads
+    r1_unassem_qc_fa = None
+    r2_unassem_qc_fa = None
     if not single_end and output_merged and r1_unassem_qc and os.path.getsize(r1_unassem_qc):
         r1_unassem_qc_fa = out(f"{sample_name}_unassembled_R1_qc-03.fasta")
         r2_unassem_qc_fa = out(f"{sample_name}_unassembled_R2_qc-03.fasta")
@@ -490,27 +493,9 @@ def main():
             if res.returncode != 0:
                 fail("pigz compressing unmerged FASTA failed")
 
+    
     ###########################################################################
-    # Step 15: Compute stats over every intermediate FASTQ
-    ###########################################################################
-
-    log("Computing statistics...")
-    rows = []
-    for f in sorted(glob.glob(str(results_dir / "*.fastq")) + glob.glob(str(results_dir / "*.fastq.gz"))):
-        base = os.path.basename(f)
-        n = count_fastq(f)
-        length = mean_length(f, fmt="fastq") if os.path.getsize(f) else 0
-        order = parse_order(base)
-        rows.append({"sample": sample_name, "file": base, "stat": "num_seq",     "value": n,      "order": order})
-        rows.append({"sample": sample_name, "file": base, "stat": "mean_length", "value": length, "order": order})
-
-    with open(stats_out, "w") as fh:
-        fh.write("sample\tfile\tstat\tvalue\torder\n")
-        for r in rows:
-            fh.write(f"{r['sample']}\t{r['file']}\t{r['stat']}\t{r['value']}\t{r['order']}\n")
-
-    ###########################################################################
-    # Step 16: Remove the plain QC-trimmed reads once compressed
+    # Step 15: Remove the plain QC-trimmed reads once compressed
     ###########################################################################
 
     # pigz --keep leaves the plain file in place alongside the new .gz; keeping
@@ -528,21 +513,10 @@ def main():
             if se_fa and os.path.exists(se_fa):
                 os.remove(se_fa)
 
-        # remove uncompressed fastq and fasta merged paired-reads
-        if not single_end and output_merged:
-            if r_assem_qc and os.path.exists(r_assem_qc):
-                os.remove(r_assem_qc)
-            if r_assem_qc_fa and os.path.exists(r_assem_qc_fa):
-                os.remove(r_assem_qc_fa)
-
         # remove uncompressed fastq and fasta unmerged reads
         if not single_end and output_merged:
-            if r1_unassem_qc and os.path.exists(r1_unassem_qc):
-                os.remove(r1_unassem_qc)
             if r1_unassem_qc_fa and os.path.exists(r1_unassem_qc_fa):
                 os.remove(r1_unassem_qc_fa)
-            if r2_unassem_qc and os.path.exists(r2_unassem_qc):
-                os.remove(r2_unassem_qc)
             if r2_unassem_qc_fa and os.path.exists(r2_unassem_qc_fa):
                 os.remove(r2_unassem_qc_fa)
 
@@ -554,6 +528,29 @@ def main():
                 os.remove(r2_qc)
 
     ###########################################################################
+    # Step 16: Compute stats over every intermediate FASTQ
+    ###########################################################################
+
+    # the stats section if performed after removing the uncompressed fastq and 
+    # fasta files, so that the stats are computed only over the final outputs 
+    # of the pipeline
+    log("Computing statistics...")
+    rows = []
+    for f in sorted(glob.glob(str(results_dir / "*.fastq")) + glob.glob(str(results_dir / "*.fastq.gz"))):
+        base = os.path.basename(f)
+        n = count_fastq(f)
+        length = mean_length(f, fmt="fastq") if os.path.getsize(f) else 0
+        order = parse_order(base)
+        rows.append({"sample": sample_name, "file": base, "stat": "num_seq",     "value": n,      "order": order})
+        rows.append({"sample": sample_name, "file": base, "stat": "mean_length", "value": length, "order": order})
+
+    with open(stats_out, "w") as fh:
+        fh.write("sample\tfile\tstat\tvalue\torder\n")
+        for r in rows:
+            fh.write(f"{r['sample']}\t{r['file']}\t{r['stat']}\t{r['value']}\t{r['order']}\n")
+
+
+    ###########################################################################
     # Step 17: Clean intermediates (optional)
     ###########################################################################
 
@@ -563,7 +560,7 @@ def main():
     if clean:
         log("Cleaning intermediate files...")
         for f in intermediates:
-            if f and os.path.realpath(f):
+            if f and os.path.exists(f):
                 os.remove(f)
 
     ###########################################################################

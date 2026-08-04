@@ -386,7 +386,7 @@ ggsave(perc_phix_barplot,
 
 stats_tbl <- qa_means2counts |>
   dplyr::rename(sample = lane, mean_q_r1 = mean_q)
-if (!single_end) {
+if (!single_end_flag) {
   stats_tbl <- stats_tbl |>
     left_join(
       qa_means2counts_r2 |>
