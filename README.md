@@ -1,370 +1,246 @@
-# Metagenomic pipelines
-This repository contains scripts for quality checking, preprocessing, assembling, and mapping metagenomic data.
+# Metagenomic Processing Pipeline
 
-# Repository structure
+This repository provides a containerized [Nextflow](https://www.nextflow.io/)
+pipeline for quality checking, preprocessing, de novo assembly, and read mapping
+of shotgun metagenomic sequencing data (paired-end or single-end). Each step is a
+Nextflow process (under `modules/`) that wraps a Python or R script in `bin/` and
+runs in its own Docker image.
+
+The workflow runs end to end: quality-check diagnostics, then preprocessing, then
+assembly + mapping of the preprocessed reads. Assembly can be skipped with
+`--skip_assembly`.
+
+## Repository structure
 
 ```
 .
-├── LICENSE
-├── README.md
-├── environment.yml                          # Conda environment specification
-└── modules/                                 # Pipeline modules
-    ├── 1.1-quality_check_fastp.sh           # Quality check using fastp
-    ├── 1.2-quality_check.R                  # Quality check plots using R
-    ├── 2-preprocess_pipeline.sh             # Main preprocessing pipeline script
-    ├── 3-assembly_and_map_pipeline.sh       # De novo assembly and read mapping
-    ├── conf.sh                              # Configuration file with tool paths
-    └── resources/                           # Additional resources and scripts
-        ├── fq2fa.sh                         # FASTQ to FASTA conversion script
-        └── plots.R                          # R script for generating statistics plots
+├── LICENSE                                 # License file
+├── README.md                               # This file
+├── mg-proc.nf                              # Nextflow workflow entry point
+├── nextflow.config                         # Nextflow parameters and Docker settings
+├── bin/                                    # Step scripts (auto-staged onto PATH)
+│   ├── 1.1-quality-check.py                # fastp QC report (per sample)
+│   ├── 1.2-quality-check.R                 # Comparative QC plots (all samples)
+│   ├── 2-preprocess.py                     # Preprocessing pipeline (per sample)
+│   ├── 3-assembly-and-map.py               # Assembly + mapping (per sample)
+│   ├── utils.py                            # Shared Python helpers
+│   └── utils.R                             # Shared R helpers
+├── modules/                                # Nextflow process definitions (*.nf)
+├── docker/                                 # Per-module Dockerfiles + build script
+│   ├── *.Dockerfile
+│   ├── dockerbuild_commands.sh
+│   └── resources/*.requirements.yml
+└── tests/                                  # Bundled test data + smoke test
 ```
 
-# **Installation instructions**
+## Installation
 
-**Clone the repository**:  
+The pipeline runs entirely in containers, so the only prerequisites are:
+
+- **Java** 11 or later (required by Nextflow)
+- **[Nextflow](https://www.nextflow.io/)** 23.04 or later:
+  ```bash
+  curl -s https://get.nextflow.io | bash
+  sudo mv nextflow /usr/local/bin/    # or any directory on your PATH
+  ```
+- **[Docker](https://docs.docker.com/get-docker/)** (the daemon must be running; the
+  invoking user must be able to run `docker`)
+
+Then clone the repository:
+
 ```bash
 git clone https://github.com/pereiramemo/MG-Proc.git
 cd MG-Proc
 ```
 
-**Installation with mamba**:  
-All dependencies can be installed using mamba (or conda). 
+The per-module Docker images are published at `ghcr.io/pereiramemo/mg-proc/*`, and
+Nextflow pulls them automatically on the first `nextflow run` (`docker.enabled = true`
+in `nextflow.config`). You only need to build images yourself if you change a
+Dockerfile or a pinned dependency — see
+[Building & publishing the images](#building--publishing-the-images).
 
-First, check if mamba is installed:
+## Pipeline steps
+
+| Module | Script | Purpose |
+|--------|--------|---------|
+| `MODULE_1_1_QUALITY_CHECK`   | `1.1-quality-check.py`   | fastp QC report, report-only (diagnostic, always runs) |
+| `MODULE_1_2_QUALITY_CHECK`   | `1.2-quality-check.R`    | Comparative QC plots: mean-quality vs read count, count histograms, PhiX % (diagnostic, always runs) |
+| `MODULE_2_PREPROCESS`        | `2-preprocess.py`        | Reformat/repair, subsample, adapter trim, quality trim, PE merge, FASTA conversion |
+| `MODULE_3_ASSEMBLY_AND_MAP`  | `3-assembly-and-map.py`  | MEGAHIT assembly + BWA-MEM mapping + optional Picard dedup |
+
+Each step writes a standardized layout under its publish directory: `output/`
+(main results), `logs/` (a log file with a general-info header followed by any
+third-party tool output), and `stats/` (TSV statistics). The output, logging, and
+naming conventions are documented in `.claude/CLAUDE.md`.
+
+## Workflow
+
+```
+reads ─┬─> MODULE_1_1_QUALITY_CHECK      (per sample, diagnostic)
+       ├─> MODULE_1_2_QUALITY_CHECK      (all samples, diagnostic)
+       └─> MODULE_2_PREPROCESS ──(QC-trimmed reads)──> MODULE_3_ASSEMBLY_AND_MAP
+```
+
+`MODULE_1_1_QUALITY_CHECK` (fastp) and `MODULE_1_2_QUALITY_CHECK` (comparative plots)
+are diagnostics that always run on the raw reads. `MODULE_2_PREPROCESS` runs per
+sample; the quality-trimmed reads it emits (paired-end `*_qc-02.fastq`, single-end
+`*_se_qc-02.fastq`; compressed to `.gz` when `--compress true`) feed
+`MODULE_3_ASSEMBLY_AND_MAP`, which is skipped when `--skip_assembly true`.
+
+Paired-end and single-end reads are both supported, and the reads channel is
+always built from the `--input_tsv` samplesheet: a row's `reads2` is empty for
+a single-end sample. There's no separate `--single_end` flag — `mg-proc.nf`
+infers it once from the sheet (which must be all paired-end or all
+single-end) and every module runs accordingly.
+
+## Run
+
 ```bash
-command -v mamba
+# Paired-end run on the bundled test data
+nextflow run mg-proc.nf \
+    --input_tsv tests/data/samplesheet_pe.tsv \
+    --subsample t
+
+# Single-end run (samplesheet_se.tsv leaves reads2 empty)
+nextflow run mg-proc.nf \
+    --input_tsv tests/data/samplesheet_se.tsv \
+    --reformat t --subsample t
+
+# QC + preprocess only (no assembly)
+nextflow run mg-proc.nf --skip_assembly true
+
+# On your own data: write a TSV with sample_name, reads1, reads2 columns
+# (leave reads2 empty for single-end samples), then:
+nextflow run mg-proc.nf \
+    --input_tsv     /path/to/samplesheet.tsv \
+    --output_dir    /path/to/results \
+    --trim_adapters t \
+    --nslots        16
+
+# Full parameter listing
+nextflow run mg-proc.nf --help
 ```
 
-If mamba is not installed, you can install it via:
-- **Miniforge** (recommended): [https://github.com/conda-forge/miniforge](https://github.com/conda-forge/miniforge)
-- **Mambaforge**: [https://github.com/conda-forge/miniforge#mambaforge](https://github.com/conda-forge/miniforge#mambaforge)
-- **Or install mamba into an existing conda installation**:
-  ```bash
-  conda install -n base -c conda-forge mamba
-  ```
+## Parameters
 
-Once mamba is installed, create a new environment using the provided `environment.yml` file:
+All parameters have defaults in `nextflow.config` and can be overridden on the command
+line (e.g. `--nslots 16`). The full list (output of `nextflow run mg-proc.nf --help`):
+
+```text
+General:
+  --input_tsv         FILE  TSV samplesheet: sample_name, reads1, reads2
+                            (empty reads2 => single-end; default: ./tests/data/samplesheet_pe.tsv)
+  --output_dir        DIR   Output directory (default: ./tests/output_nf)
+  --nslots            INT   CPU threads per tool (default: 12)
+  --maxForks          INT   Max parallel process instances (default: 3)
+  --full_output       BOOL  Publish all module outputs (default: true)
+  --publish_mode      STR   publishDir mode: copy | symlink | rellink | link | move (default: copy)
+  --skip_assembly     BOOL  Skip MODULE_3_ASSEMBLY_AND_MAP (default: false)
+  --container_tag     STR   Tag of the ghcr.io/pereiramemo/mg-proc/* images (default: latest)
+
+MODULE_1_1_QUALITY_CHECK — fastp QC report (always runs):
+  --qc_min_length             INT  Minimum read length, reporting only (default: 50)
+  --qualified_quality_phred   INT  Qualified base quality, reporting only (default: 20)
+  --unqualified_percent_limit INT  Max unqualified base percent (default: 40)
+  --disable_adapter_trimming  STR  Disable adapter trimming in report, t/f (default: t)
+
+MODULE_1_2_QUALITY_CHECK — comparative QC plots (always runs):
+  --qc_sample_size  INT   Reads subsampled per file for QC (default: 10000)
+
+MODULE_2_PREPROCESS — preprocessing:
+  --reformat        STR  Reformat FASTQ with reformat.sh, t/f (default: f)
+  --repair          STR  Reformat + repair FASTQ (PE), t/f (default: f)
+  --subsample       STR  Subsample to 10k reads, t/f (default: f)
+  --trim_adapters   STR  Remove adapters with BBDuk, t/f (default: f)
+  --output_pe       STR  Output PE R1/R2 QC reads; only takes effect with
+                          --skip_assembly true, t/f (default: f)
+  --output_merged   STR  Merge PE reads, t/f (default: t)
+  --merger          STR  pear | bbmerge (default: pear)
+  --min_overlap     INT  Minimum PE overlap for PEAR (default: 10)
+  --pvalue          NUM  p-value for PEAR (default: 0.01)
+  --min_length      INT  Minimum read length after trimming (default: 75)
+  --min_qual        INT  Quality trim threshold (default: 20)
+  --seed            INT  Random seed for subsampling (default: 123)
+  --clean           STR  Remove intermediates, t/f (default: f)
+  --compress        STR  Compress outputs with pigz, t/f (default: f)
+
+MODULE_3_ASSEMBLY_AND_MAP — assembly + mapping:
+  --assem_preset      STR  MEGAHIT preset (default: meta-sensitive)
+  --min_contig_length INT  Minimum contig length to keep (default: 250)
+  --remove_duplicates STR  Remove PCR duplicates with Picard, t/f (default: f)
+  --contigs           STR  Pre-assembled contigs FASTA (default: none)
+  --assem_dir         STR  Directory with previous assemblies (default: none)
+```
+
+## Threads and parallelism
+
+Two parameters control CPU usage:
+
+- `--nslots` — threads given to one tool invocation (a single task).
+- `--maxForks` — how many per-sample tasks run at the same time.
+
+Per-sample modules (`MODULE_1_1_QUALITY_CHECK`, `MODULE_2_PREPROCESS`,
+`MODULE_3_ASSEMBLY_AND_MAP`) reserve `cpus = nslots` each, so up to `maxForks` run at
+once. The aggregate `MODULE_1_2_QUALITY_CHECK` reads every sample together (its input is
+`.collect()`ed in `mg-proc.nf`) and reserves the whole budget `nslots * maxForks`, so it
+runs alone with all threads. This is enforced by the local-executor budget
+`executor.cpus = nslots * maxForks` in `nextflow.config`.
+
+> **Keep `nslots * maxForks` at or below the machine's physical core count.** The executor
+> budget is pinned to that product, so a larger value oversubscribes the CPUs — Nextflow
+> will not clamp it for you. Example on a 48-core host:
+> `nextflow run mg-proc.nf --nslots 16 --maxForks 3` (16 × 3 = 48).
+
+## Building & publishing the images
+
+End users do **not** need this section — the published images pull automatically. It is
+only for rebuilding and republishing after changing a Dockerfile or a pinned dependency
+in `docker/resources/*.requirements.yml`. The images are built from the per-module
+Dockerfiles in `docker/` by `docker/dockerbuild_commands.sh` (run from the repository
+root):
+
 ```bash
-mamba env create -f environment.yml
+# Build + tag :latest locally
+bash docker/dockerbuild_commands.sh
+
+# Build, tag with a version, and push (:latest and :v1.0.0) to the registry
+echo "$GHCR_PAT" | docker login ghcr.io -u pereiramemo --password-stdin   # PAT needs write:packages
+PUSH=1 VERSION=v1.0.0 bash docker/dockerbuild_commands.sh
 ```
 
-Then activate the environment:
-```bash
-mamba activate MG-Proc
-```
+The script honours two environment variables: `VERSION` (adds an extra immutable tag
+alongside `:latest`) and `PUSH=1` (pushes after building). Newly pushed packages are
+**private by default**; make each one public (GitHub → **Packages** → **Package settings**
+→ **Change visibility** → **Public**) so machines can pull them anonymously.
 
-# **How to use**
+### Reproducible installs (image version pinning)
 
-## 1.1-quality_check_fastp.sh
+Every module pulls `ghcr.io/pereiramemo/mg-proc/<module>:${params.container_tag}`.
+`container_tag` defaults to `latest`; for a reproducible install, pin a published version,
+either per run (`nextflow run mg-proc.nf --container_tag v1.0.0`) or by changing the default
+in `nextflow.config`. A pinned tag must already be published, or the pull fails.
 
-[1.1-quality_check_fastp.sh](modules/1.1-quality_check_fastp.sh): Quality assessment of raw Illumina reads (paired-end or single-end) using fastp. Runs in report-only mode — input files are never modified.
+## Dependencies
 
-### Main analysis
-- Batch quality assessment across all samples in an input directory
-- Paired-end and single-end read support
-- Per-sample HTML and JSON reports with base quality, GC content, duplication, and length distribution
-- Aggregated summary statistics table across all samples
+Dependencies are pinned per module in `docker/resources/*.requirements.yml` and built
+into the per-module images — there is nothing to install manually beyond Nextflow and
+Docker.
 
-### Output files
-- `reports/SAMPLE_fastp.html`: Interactive HTML quality report per sample
-- `reports/SAMPLE_fastp.json`: Machine-readable JSON quality report per sample
-- `reports/SAMPLE_fastp.log`: fastp run log per sample
-- `stats/summary.tsv`: Tab-separated table with read counts and Q20/Q30 base percentages for all samples
-- `summary_report.txt`: Plain-text run summary including parameters and aggregated statistics
+| Tool | Purpose |
+|------|---------|
+| [fastp](https://github.com/OpenGene/fastp) | Read quality control (QC report) |
+| [BBTools](https://jgi.doe.gov/data-and-tools/bbtools/) | reformat.sh, repair.sh, BBDuk, BBMerge (reformat/repair, adapter & quality trim, merging) |
+| [seqtk](https://github.com/lh3/seqtk) | Subsampling and FASTQ→FASTA conversion |
+| [PEAR](https://cme.h-its.org/exelixis/web/software/pear) | Paired-end read merging |
+| [pigz](https://zlib.net/pigz/) | Parallel gzip compression |
+| [MEGAHIT](https://github.com/voutcn/megahit) | De novo metagenomic assembly |
+| [BWA](https://github.com/lh3/bwa) | Read mapping |
+| [SAMtools](http://www.htslib.org/) | SAM/BAM manipulation |
+| [Picard](https://broadinstitute.github.io/picard/) | PCR duplicate removal |
+| [R](https://www.r-project.org/) + [tidyverse](https://www.tidyverse.org/) / [ShortRead](https://bioconductor.org/packages/ShortRead/) / [DADA2](https://benjjneb.github.io/dada2/) | Comparative QC plots and PhiX detection |
+| [Python 3](https://www.python.org/) | Step scripts and orchestration helpers |
 
-### Help
-```
-Usage: 1.1-quality_check_fastp.sh <options>
-
-Options:
-    --help
-        Print this help message and exit
-
-    --input_dir=CHAR
-        Directory containing input FASTQ files (required)
-
-    --output_dir=CHAR
-        Directory to output generated data (QC reports and plots) (required)
-
-    --single_end=t|f
-        Process single-end reads instead of paired-end [default=f]
-
-    --r1_pattern=CHAR
-        Pattern for R1 FASTQ files, or single-end files when --single_end=t
-        [default=_R1_001.fastq.gz]
-
-    --r2_pattern=CHAR
-        Pattern for R2 FASTQ files (ignored when --single_end=t)
-        [default=_R2_001.fastq.gz]
-
-    --nslots=NUM
-        Number of threads to use [default=12]
-
-    --min_length=NUM
-        Minimum read length filter (only for reporting) [default=50]
-
-    --qualified_quality_phred=NUM
-        Minimum quality value for qualified base (Phred score, only for reporting) [default=20]
-
-    --unqualified_percent_limit=NUM
-        Maximum percent of unqualified bases allowed (only for reporting) [default=40]
-
-    --disable_adapter_trimming=t|f
-        Disable adapter trimming in report [default=t]
-
-    --html_report=t|f
-        Generate HTML report [default=t]
-
-    --json_report=t|f
-        Generate JSON report [default=t]
-
-    --overwrite=t|f
-        Overwrite previous directory [default=f]
-```
-
-### Example usage
-```bash
-./modules/1.1-quality_check_fastp.sh \
-    --input_dir=raw_data/ \
-    --output_dir=results/qc_reports
-```
-
----
-
-## 1.2-quality_check.R
-
-[1.2-quality_check.R](modules/1.2-quality_check.R): R script that generates summary quality plots from raw Illumina reads (paired-end or single-end). Reads FASTQ files directly and produces publication-ready PNG figures.
-
-### Main analysis
-- Calculation of mean quality scores per sample for R1 (and R2 in paired-end mode)
-- Scatter plot of mean quality score versus read count
-- Histogram of read count distributions (linear and log scale)
-- Detection and quantification of PhiX contamination per sample
-
-### Output files
-- `r1_mean_q_vs_nseq.png`: Scatter plot of mean R1 quality score vs. number of reads per sample
-- `r2_mean_q_vs_nseq.png`: Scatter plot of mean R2 quality score vs. number of reads per sample (paired-end only)
-- `samples_hist.png`: Histogram of read counts across samples
-- `samples_hist_log.png`: Log-scale histogram of read counts across samples
-- `samples_perc_phix_barplot.png`: Bar plot of estimated PhiX contamination percentage per sample
-
-### Help
-```
-Usage: 1.2-quality_check.R [options]
-
-Options:
-        --input_dir=CHARACTER
-                Input directory with FASTQ files
-
-        --output_dir=CHARACTER
-                Output directory for plots
-
-        --nslots=INTEGER
-                Number of threads to use [default=12]
-
-        --single_end=LOGICAL
-                Process single-end reads instead of paired-end [default=FALSE]
-
-        --r1_pattern=CHARACTER
-                Pattern for R1 FASTQ files, or single-end files when
-                --single_end=TRUE [default=R1_001.fastq.gz]
-
-        --r2_pattern=CHARACTER
-                Pattern for R2 FASTQ files (ignored when --single_end=TRUE)
-                [default=R2_001.fastq.gz]
-
-        --overwrite=LOGICAL
-                Overwrite previous output [default=FALSE]
-
-        -h, --help
-                Show this help message and exit
-```
-
-### Example usage
-```bash
-Rscript modules/1.2-quality_check.R \
-    --input_dir=raw_data/ \
-    --output_dir=results/qc_plots
-```
-
----
-
-## 2-preprocess_pipeline.sh
-
-[2-preprocess_pipeline.sh](modules/2-preprocess_pipeline.sh): Preprocessing pipeline for raw Illumina metagenomic reads (paired-end or single-end). Produces a quality-trimmed FASTA file ready for downstream analyses such as assembly and mapping.
-
-### Main analysis
-- Optional FASTQ reformat (`--reformat=t`): runs `reformat.sh tossbrokenreads=t` to fix malformed records and SRA-format extended `+` headers (SE and PE)
-- Optional FASTQ repair (`--repair=t`): runs `reformat.sh` first, then `repair.sh` to restore mate pairing (PE only; SE gets reformat only)
-- Optional adapter trimming with BBDuk
-- Optional subsampling to 10,000 reads for rapid testing
-- Paired-end read merging with PEAR or BBMerge (PE only)
-- Quality trimming of merged reads, unmerged PE reads, or single-end reads with BBDuk
-- FASTQ-to-FASTA conversion of quality-trimmed output
-- Read count and mean length statistics at each processing step, with optional plots
-
-### Output files
-- `SAMPLE_workable.fasta` (or `.fasta.gz`): Quality-trimmed FASTA file ready for downstream analyses — merged reads (PE) or quality-trimmed reads (SE)
-- `stats.tsv`: Tab-separated table with read counts and mean lengths at each pipeline step; includes one row per intermediate FASTQ file, including singletons discarded by `repair.sh` when `--repair=t`
-- `stats_plots.png`: Plot of read counts and mean lengths across processing steps (when `--plot=t`)
-- `SAMPLE_R1_qc-02.fastq` / `SAMPLE_R2_qc-02.fastq`: Quality-trimmed paired-end FASTQ files (when `--output_pe=t`)
-- `SAMPLE_assembled_qc-03.fasta`: Quality-trimmed merged reads in FASTA (PE, when `--output_merged=t`)
-- `SAMPLE_unassembled_R1_qc-03.fasta` / `SAMPLE_unassembled_R2_qc-03.fasta`: Quality-trimmed unmerged reads in FASTA (PE, when `--output_merged=t`)
-- `SAMPLE_singletons_repaired-00.fastq`: PE reads that lost their mate during `repair.sh` and could not be re-paired (PE only, when `--repair=t`); included in `stats.tsv` as a record of discarded reads
-
-### Help
-```
-Usage: 2-preprocess_pipeline.sh [OPTIONS]
-
-Required:
-  --reads FILE          R1 file (or single-end file when --single_end=t)
-  --output_dir DIR      Output directory
-
-Paired-end only (ignored when --single_end=t):
-  --reads2 FILE         R2 file
-  --merger STR          pear|bbmerge (default pear)
-  --min_overlap NUM     Minimum PE overlap for PEAR (default 10)
-  --output_pe t|f       Output QC'ed paired-end reads (default f)
-  --output_merged t|f   Output merged QC'ed reads (default t)
-  --pvalue NUM          p-value for PEAR (default 0.01)
-
-Optional:
-  --single_end t|f      Process as single-end reads (default f)
-  --reformat t|f        Reformat FASTQ with reformat.sh (default f)
-                        Fixes malformed records and SRA extended + headers
-  --repair t|f          Reformat + repair FASTQ (default f)
-                        Runs reformat.sh then repair.sh (repair.sh PE only)
-  --clean t|f           Remove intermediates (default f)
-  --compress t|f        Compress outputs with pigz (default f)
-  --min_length NUM      Minimum read length after trimming (default 75)
-  --min_qual NUM        Quality trim threshold (default 20)
-  --nslots NUM          Threads (default 12)
-  --overwrite t|f       Replace existing output dir (default f)
-  --plot t|f            Produce QC plots (default f)
-  --sample_name STR     Name prefix (default metagenomex)
-  --seed NUM            Random seed for subsampling (default 123)
-  --subsample t|f       Subsample to 10k reads (default f)
-  --trim_adapters t|f   Remove adapters (default f)
-  --help                Show this help
-```
-
-### Example usage
-```bash
-# Paired-end with adapter trimming and merging
-./modules/2-preprocess_pipeline.sh \
-    --reads sample_R1.fastq.gz \
-    --reads2 sample_R2.fastq.gz \
-    --output_dir results/sample1_preproc \
-    --trim_adapters=t \
-    --output_merged=t \
-    --sample_name=sample1
-
-# Single-end with repair (e.g. SRA data)
-./modules/2-preprocess_pipeline.sh \
-    --reads sample_SE.fastq \
-    --single_end=t \
-    --repair=t \
-    --output_dir results/sample1_preproc \
-    --sample_name=sample1
-```
-
----
-
-## 3-assembly_and_map_pipeline.sh
-
-[3-assembly_and_map_pipeline.sh](modules/3-assembly_and_map_pipeline.sh): De novo assembly and read mapping pipeline for metagenomic samples. Supports paired-end and single-end reads, and can use pre-assembled contigs instead of running assembly.
-
-### Main analysis
-- De novo assembly with MEGAHIT using paired-end (`-1`/`-2`) or single-end (`-r`) mode; alternatively, accepts pre-assembled contigs via `--contigs` or `--assem_dir`
-- Read mapping against assembled contigs with BWA-MEM, filtering for primary alignments with mapping quality ≥ 10
-- BAM sorting and indexing with SAMtools
-- Optional PCR duplicate marking and removal with Picard MarkDuplicates
-- Automatic cleanup of intermediate files and BWA index files
-
-### Output files
-- `SAMPLE_sorted.bam`: Sorted BAM file of reads mapped to the assembly (when `--remove_duplicates=f`)
-- `SAMPLE_sorted.bam.bai`: Index for the sorted BAM file
-- `SAMPLE_sorted_markdup.bam`: Sorted, duplicate-removed BAM file (when `--remove_duplicates=t`)
-- `SAMPLE_sorted_markdup.bam.bai`: Index for the duplicate-removed BAM file
-- `SAMPLE_sorted_markdup.metrics.txt`: Picard duplicate metrics report (when `--remove_duplicates=t`)
-- `SAMPLE.contigs.fa`: Assembled contigs in FASTA format (when MEGAHIT is run)
-
-### Help
-```
-Usage: 3-assembly_and_map_pipeline.sh [OPTIONS]
-
-Required:
-  --reads1 CHAR              Input R1 (or single-end) metagenome reads (fastq/fa)
-
-Paired-end only (ignored when --single_end=t):
-  --reads2 CHAR              Input R2 metagenome reads (fastq/fa)
-
-Optional:
-  --single_end t|f           Process as single-end reads (default: f)
-  --sample_name CHAR         Sample name used to name output files (default: metagenomex)
-  --contigs CHAR             Path to pre-assembled contigs file (FASTA format)
-                             Supports both compressed (.gz) and uncompressed files
-                             Takes precedence over --assem_dir
-  --assem_dir CHAR           Directory with previously computed assemblies
-                             Will search for: SAMPLE_NAME.contigs.{fa,fasta,fna}[.gz]
-                             in ASSEM_DIR/ or ASSEM_DIR/SAMPLE_NAME/
-                             Supports both compressed (.gz) and uncompressed files
-  --assem_preset CHAR        MEGAHIT preset to generate assembly
-                             (default: meta-sensitive)
-  --nslots NUM               Number of threads used (default: 12)
-  --min_contig_length NUM    Minimum length of contigs to keep (default: 250)
-  --output_dir CHAR          Output directory (default: mg-clust_output-1)
-  --overwrite t|f            Overwrite previous folder if present (default: f)
-  --remove_duplicates t|f    Remove PCR duplicates with Picard (default: f)
-  --help                     Print this help and exit
-```
-
-### Example usage
-```bash
-# Paired-end de novo assembly and mapping
-./modules/3-assembly_and_map_pipeline.sh \
-    --reads1 sample_R1.fastq.gz \
-    --reads2 sample_R2.fastq.gz \
-    --sample_name sample1 \
-    --nslots 16 \
-    --output_dir results/sample1_assembly
-
-# Single-end de novo assembly and mapping
-./modules/3-assembly_and_map_pipeline.sh \
-    --reads1 sample_SE.fastq.gz \
-    --single_end t \
-    --sample_name sample1 \
-    --nslots 16 \
-    --output_dir results/sample1_assembly
-```
-
-# **Dependencies**
-
-All dependencies are specified in the [environment.yml](environment.yml) file and can be installed via mamba/conda.
-
-**Core tools:**
-- [bzip2](http://www.bzip.org) - File compression
-- [gzip](https://www.gzip.org) - File compression
-- [pigz](https://zlib.net/pigz/) - Parallel gzip compression
-- [seqtk](https://github.com/lh3/seqtk) - Sequence processing toolkit
-- [BBTools](https://jgi.doe.gov/data-and-tools/bbtools/) - Suite including BBDuk and BBMerge for adapter trimming and read merging
-- [PEAR](https://cme.h-its.org/exelixis/web/software/pear) - Paired-end read merger
-- [fastp](https://github.com/OpenGene/fastp) - Fast all-in-one preprocessing tool
-- [MEGAHIT](https://github.com/voutcn/megahit) - De novo assembler for metagenomes
-- [BWA](https://github.com/lh3/bwa) - Burrows-Wheeler Aligner for read mapping
-- [SAMtools](http://www.htslib.org/) - SAM/BAM file manipulation
-- [Picard](https://broadinstitute.github.io/picard/) - Java tools for manipulating sequencing data
-- [EMBOSS](http://emboss.sourceforge.net/) - Sequence analysis tools (provides infoseq)
-
-**R and R packages:**
-- [R](https://www.r-project.org) - Statistical computing environment
-- [tidyverse](https://www.tidyverse.org) - Data manipulation and visualization
-- [ShortRead](https://bioconductor.org/packages/release/bioc/html/ShortRead.html) - FASTQ file handling (Bioconductor)
-- [doParallel](https://cran.r-project.org/web/packages/doParallel/index.html) - Parallel processing
-- [dada2](https://bioconductor.org/packages/release/bioc/html/dada2.html) - Sequence quality profiling (Bioconductor)
-- [optparse](https://cran.r-project.org/web/packages/optparse/index.html) - Command-line argument parsing  
-
-# **License**
+## License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
@@ -372,7 +248,4 @@ Copyright (C) 2025 Emiliano Pereira
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.  
-
-
-
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.

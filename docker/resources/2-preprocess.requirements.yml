@@ -1,0 +1,10 @@
+name: mg-proc-2-preprocess
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python>=3.8
+  - bbmap=39.06
+  - seqtk=1.4
+  - pear=0.9.6
+  - pigz

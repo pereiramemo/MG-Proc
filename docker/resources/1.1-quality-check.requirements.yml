@@ -1,0 +1,7 @@
+name: mg-proc-1.1-quality-check
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python>=3.8
+  - fastp=0.23.4

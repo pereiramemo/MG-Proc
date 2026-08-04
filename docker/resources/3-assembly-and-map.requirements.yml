@@ -1,0 +1,10 @@
+name: mg-proc-3-assembly-and-map
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python>=3.8
+  - megahit=1.2.9
+  - bwa=0.7.18
+  - samtools=1.20
+  - picard=3.1.1
