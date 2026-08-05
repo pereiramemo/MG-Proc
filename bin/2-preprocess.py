@@ -513,12 +513,14 @@ def main():
             if se_fa and os.path.exists(se_fa):
                 os.remove(se_fa)
 
-        # remove uncompressed fastq and fasta unmerged reads
+        # remove uncompressed fastq and fasta merged and unmerged reads
         if not single_end and output_merged:
             if r1_unassem_qc_fa and os.path.exists(r1_unassem_qc_fa):
                 os.remove(r1_unassem_qc_fa)
             if r2_unassem_qc_fa and os.path.exists(r2_unassem_qc_fa):
                 os.remove(r2_unassem_qc_fa)
+            if r_assem_qc_fa and os.path.exists(r_assem_qc_fa):
+                os.remove(r_assem_qc_fa)    
 
         # remove uncompressed paired reads
         if not single_end and output_pe:
